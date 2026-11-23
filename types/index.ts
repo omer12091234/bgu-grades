@@ -28,6 +28,8 @@ export type TermDistribution = {
   errorMessage?: string;
   /** Lecturers of the lecture groups (שעור) in this semester, from the course catalog. */
   lecturers?: string[];
+  /** Set when this term's data came from the course's former number (e.g. 201.1.2361 for 212.1.2361). */
+  sourceNumber?: string;
 };
 
 /** A course as identified by BGU: department.degree.course, e.g. 361.1.2251 */

@@ -5,6 +5,17 @@ import { currentAcademicYear } from "@/lib/bgu-http";
 import { isRateLimited } from "@/lib/rate-limit";
 import type { TermResponse } from "@/types";
 
+/**
+ * Renumbered departments. Courses that moved from department 201 to 212 in academic
+ * year 2026 kept their course numbers, so a 212 course's grades before 2026 are filed
+ * under 201 (e.g. 212.1.2361 was 201.1.2361), and the other way round.
+ */
+function formerDept(dept: string, year: number): string | null {
+  if (dept === "212" && year <= 2025) return "201";
+  if (dept === "201" && year >= 2026) return "212";
+  return null;
+}
+
 // GET /api/term?dept=361&degree=1&course=2251&year=2025&semester=1
 // One semester per request, so the browser can show progress and the CDN caches each term on its own.
 export async function GET(req: NextRequest) {
@@ -28,11 +39,22 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "invalid year or semester" }, { status: 400 });
   }
 
-  const [term, lecturers] = await Promise.all([
-    fetchTerm(dept, degree, course, year, semester),
-    getLecturers(dept, degree, course, year, semester).catch(() => undefined),
-  ]);
-  const body: TermResponse = { ...term, lecturers };
+  const lecturersP = getLecturers(dept, degree, course, year, semester).catch(() => undefined);
+  let term = await fetchTerm(dept, degree, course, year, semester);
+  let usedDept = dept;
+  let sourceNumber: string | undefined;
+  const alias = formerDept(dept, year);
+  if (alias && term.status === "empty") {
+    const aliased = await fetchTerm(alias, degree, course, year, semester);
+    if (aliased.status === "ok" || aliased.status === "suppressed") {
+      term = aliased;
+      usedDept = alias;
+      sourceNumber = `${alias.padStart(3, "0")}.${degree}.${course.padStart(4, "0")}`;
+    }
+  }
+  const lecturers =
+    usedDept === dept ? await lecturersP : await getLecturers(usedDept, degree, course, year, semester).catch(() => undefined);
+  const body: TermResponse = { ...term, lecturers, sourceNumber };
 
   const finished = year < curYear;
   const cacheControl =

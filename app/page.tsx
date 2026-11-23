@@ -18,7 +18,6 @@ const CompareDistribution = dynamic(() => import("@/components/CompareCharts").t
 const CompareTrend = dynamic(() => import("@/components/CompareCharts").then((m) => m.CompareTrend), { ssr: false });
 
 const MAX_COMPARE = 4;
-const REPO_URL = "https://github.com/omer12091234/bgu-grades";
 
 const EXAMPLES: PickedCourse[] = [
   { dept: "361", degree: "1", course: "1021", nameHe: "מבוא להנדסת חשמל" },
@@ -164,6 +163,21 @@ function GradeApp() {
   const setAll = () =>
     setExcluded({ key: key + lookback + semester, ids: allOn ? new Set(okTerms.map((t) => t.termId)) : new Set() });
 
+  // Lecturer filter: pick a lecturer to keep only the semesters they taught.
+  const lecturerOptions = [...new Set(okTerms.flatMap((t) => t.lecturers ?? []))];
+  const termsOf = (name: string) => okTerms.filter((t) => t.lecturers?.includes(name)).map((t) => t.termId);
+  const activeLecturer = allOn
+    ? null
+    : (lecturerOptions.find((name) => {
+        const ids = new Set(termsOf(name));
+        return ids.size === visible.length && visible.every((t) => ids.has(t.termId));
+      }) ?? null);
+  const pickLecturer = (name: string | null) => {
+    const keep = new Set(name ? termsOf(name) : okTerms.map((t) => t.termId));
+    setExcluded({ key: key + lookback + semester, ids: new Set(okTerms.map((t) => t.termId).filter((id) => !keep.has(id))) });
+  };
+  const formerNumbers = [...new Set(terms.map((t) => t.sourceNumber).filter(Boolean))] as string[];
+
   const termById = new Map(terms.map((t) => [t.termId, t]));
   const years = [...new Set(termList.map((t) => t.year))];
   const lecturersNow = okTerms[0]?.lecturers;
@@ -230,6 +244,13 @@ function GradeApp() {
               </div>
             )}
 
+            {formerNumbers.length > 0 && (
+              <div className="notice">
+                הקורס עבר ממחלקה 201 ל־212 בתשפ״ו ושמר על מספרו. הציונים של הסמסטרים שנרשמו במספר{" "}
+                {formerNumbers.map((n) => <span key={n} className="ltr">{n}</span>)} מוצגים כאן יחד, ומסומנים ברשימת הסמסטרים.
+              </div>
+            )}
+
             {okTerms.length === 0 ? (
               <div className="empty">
                 <h2>אין ציונים לקורס הזה בטווח שנבחר</h2>
@@ -238,6 +259,21 @@ function GradeApp() {
             ) : tab === "dist" ? (
               <div className="with-rail">
                 <aside className="rail" aria-label="בחירת סמסטרים">
+                  {lecturerOptions.length > 1 && (
+                    <div className="rail-filter">
+                      <div className="rail-head"><span>מרצה</span></div>
+                      <div className="lecturer-chips" role="group" aria-label="סינון לפי מרצה">
+                        <button className={activeLecturer === null && allOn ? "active" : ""} onClick={() => pickLecturer(null)}>
+                          כולם
+                        </button>
+                        {lecturerOptions.map((name) => (
+                          <button key={name} className={activeLecturer === name ? "active" : ""} onClick={() => pickLecturer(name)}>
+                            {name} <span className="n">{termsOf(name).length}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div className="rail-head">
                     <span>סמסטרים</span>
                     <button className="btn link small" onClick={setAll}>{allOn ? "נקה הכל" : "בחר הכל"}</button>
@@ -260,7 +296,12 @@ function GradeApp() {
                                 <span className="n">
                                   {has ? d!.n : d?.status === "suppressed" ? "מוסתר" : d?.status === "error" ? "שגיאה" : "—"}
                                 </span>
-                                {d?.lecturers?.length ? <span className="lect">{d.lecturers.join(", ")}</span> : null}
+                                {d?.lecturers?.length || d?.sourceNumber ? (
+                                  <span className="lect">
+                                    {d.lecturers?.join(", ")}
+                                    {d.sourceNumber && <span className="muted"> · <span className="ltr">{d.sourceNumber}</span></span>}
+                                  </span>
+                                ) : null}
                               </label>
                             );
                           })}
@@ -281,7 +322,7 @@ function GradeApp() {
                             <h2>{view === "combined" ? "התפלגות הציונים" : "התפלגות לפי סמסטר"}</h2>
                             <div className="sub">
                               {view === "combined"
-                                ? `${visible.length} סמסטרים יחד · מתחת ל־${FAIL_THRESHOLD} מסומן ככישלון`
+                                ? `${activeLecturer ? `${activeLecturer} · ` : ""}${visible.length === 1 ? "סמסטר אחד" : `${visible.length} סמסטרים יחד`} · מתחת ל־${FAIL_THRESHOLD} מסומן ככישלון`
                                 : "אחוז הסטודנטים בכל טווח ציונים · הסמסטר האחרון בצבע הכהה"}
                             </div>
                           </div>
@@ -500,7 +541,6 @@ function Shell({ children, headerSearch }: { children: React.ReactNode; headerSe
         <div className="container inner">
           <Link className="wordmark" href="/">ציונים <span>· בן-גוריון</span></Link>
           {headerSearch && <div className="header-search">{headerSearch}</div>}
-          <a className="gh" href={REPO_URL} target="_blank" rel="noreferrer">קוד מקור</a>
         </div>
       </header>
       <main>{children}</main>
