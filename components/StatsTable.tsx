@@ -55,8 +55,8 @@ export default function StatsTable({ terms, combined, fileName = "grade-stats" }
               <th>מרצה</th>
               <th>נבחנים</th>
               <th>ממוצע</th>
-              <th>חציון</th>
-              <th>סטיית תקן</th>
+              <th className="hide-sm">חציון</th>
+              <th className="hide-sm">סטיית תקן</th>
               <th>עוברים</th>
             </tr>
           </thead>
@@ -67,8 +67,8 @@ export default function StatsTable({ terms, combined, fileName = "grade-stats" }
                 <td className="lecturer">{t.lecturers?.length ? t.lecturers.join(", ") : "–"}</td>
                 <td>{t.status === "suppressed" ? `פחות מ־5 (מוסתר)` : t.n}</td>
                 <td>{fmt(t.stats.mean)}</td>
-                <td>{fmt(t.stats.median)}</td>
-                <td>{fmt(t.stats.stdev)}</td>
+                <td className="hide-sm">{fmt(t.stats.median)}</td>
+                <td className="hide-sm">{fmt(t.stats.stdev)}</td>
                 <td>{pct(t.stats.passRate)}</td>
               </tr>
             ))}
@@ -78,8 +78,8 @@ export default function StatsTable({ terms, combined, fileName = "grade-stats" }
                 <td></td>
                 <td>{combined.n}</td>
                 <td>{fmt(combined.stats.mean)}</td>
-                <td>{fmt(combined.stats.median)}</td>
-                <td>{fmt(combined.stats.stdev)}</td>
+                <td className="hide-sm">{fmt(combined.stats.median)}</td>
+                <td className="hide-sm">{fmt(combined.stats.stdev)}</td>
                 <td>{pct(combined.stats.passRate)}</td>
               </tr>
             )}

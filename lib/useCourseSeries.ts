@@ -8,14 +8,23 @@ const memo = new Map<string, Promise<TermResponse>>();
 
 export type Exam = "final" | "a" | "b" | "special";
 
+/** Waits and retries when the API says "too many requests" instead of failing the semester. */
+async function fetchWithBackoff(url: string, attempts = 4): Promise<Response> {
+  for (let i = 0; ; i++) {
+    const res = await fetch(url);
+    if (res.status !== 429 || i >= attempts - 1) return res;
+    await new Promise((r) => setTimeout(r, 2000 * (i + 1)));
+  }
+}
+
 function fetchTerm(c: CourseRef, t: TermKey, exam: Exam): Promise<TermResponse> {
   const key = `${courseKey(c)}:${t.id}:${exam}`;
   const hit = memo.get(key);
   if (hit) return hit;
-  const p = fetch(
+  const url =
     `/api/term?dept=${c.dept}&degree=${c.degree}&course=${c.course}&year=${t.year}&semester=${t.semester}` +
-      (exam === "final" ? "" : `&exam=${exam}`)
-  ).then(async (res) => {
+    (exam === "final" ? "" : `&exam=${exam}`);
+  const p = fetchWithBackoff(url).then(async (res) => {
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(json.error ?? `שגיאה ${res.status}`);
     return { ...(json as TermResponse), label: termLabel(t.year, t.semester) };

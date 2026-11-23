@@ -131,7 +131,7 @@ export default function GradeChart({ terms, mode, combined }: Props) {
             },
           },
           scales: {
-            x: { grid: { display: false }, border: { color: c.line }, ticks: { color: c.muted, font: { ...FONT, size: 11 } } },
+            x: { grid: { display: false }, border: { color: c.line }, ticks: { color: c.muted, font: { ...FONT, size: 11 }, maxRotation: 0, autoSkip: true } },
             y: {
               beginAtZero: true,
               border: { display: false },

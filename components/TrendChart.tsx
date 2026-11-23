@@ -6,7 +6,7 @@ import {
 import { Line } from "react-chartjs-2";
 import type { TermDistribution } from "@/types";
 import { lecturerKey } from "@/lib/stats";
-import { useThemeColors } from "@/lib/useThemeColors";
+import { useIsNarrow, useThemeColors } from "@/lib/useThemeColors";
 
 ChartJS.register(CategoryScale, LinearScale, LineElement, PointElement, Tooltip, Legend);
 
@@ -38,6 +38,7 @@ function lecturerChangePlugin(changes: number[], color: string): Plugin<"line"> 
 /** `terms` must be in chronological order (oldest first). */
 export default function TrendChart({ terms }: { terms: TermDistribution[] }) {
   const c = useThemeColors();
+  const narrow = useIsNarrow();
   const ok = terms.filter((t) => t.status === "ok");
 
   const changes: number[] = [];
@@ -46,7 +47,7 @@ export default function TrendChart({ terms }: { terms: TermDistribution[] }) {
   });
 
   const data = {
-    labels: ok.map((t) => (ok.length > 8 ? t.label : [t.label, ...(t.lecturers?.length ? [t.lecturers.join(", ")] : [])])),
+    labels: ok.map((t) => (ok.length > 8 || narrow ? t.label : [t.label, ...(t.lecturers?.length ? [t.lecturers.join(", ")] : [])])),
     datasets: [
       {
         label: "ממוצע",
@@ -54,7 +55,7 @@ export default function TrendChart({ terms }: { terms: TermDistribution[] }) {
         borderColor: c.accent,
         backgroundColor: c.accent,
         borderWidth: 2.5,
-        pointRadius: 4,
+        pointRadius: narrow ? 3 : 4,
         yAxisID: "y",
       },
       {
@@ -122,7 +123,7 @@ export default function TrendChart({ terms }: { terms: TermDistribution[] }) {
             x: {
               grid: { display: false },
               border: { color: c.line },
-              ticks: { color: c.muted, font: { ...FONT, size: 11 }, maxRotation: 0, autoSkip: ok.length > 8 },
+              ticks: { color: c.muted, font: { ...FONT, size: 11 }, maxRotation: 0, autoSkip: ok.length > 8 || narrow },
             },
             y: {
               position: "left",
@@ -130,7 +131,7 @@ export default function TrendChart({ terms }: { terms: TermDistribution[] }) {
               suggestedMax: 100,
               border: { display: false },
               grid: { color: c.line },
-              title: { display: true, text: "ציון", color: c.muted, font: FONT },
+              title: { display: !narrow, text: "ציון", color: c.muted, font: FONT },
               ticks: { color: c.muted, font: { ...FONT, size: 11 } },
             },
             y2: {
@@ -139,7 +140,7 @@ export default function TrendChart({ terms }: { terms: TermDistribution[] }) {
               max: 100,
               border: { display: false },
               grid: { display: false },
-              title: { display: true, text: "% עוברים", color: c.muted, font: FONT },
+              title: { display: !narrow, text: "% עוברים", color: c.muted, font: FONT },
               ticks: { color: c.muted, font: { ...FONT, size: 11 }, callback: (v) => `${v}%` },
             },
           },

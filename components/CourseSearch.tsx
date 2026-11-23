@@ -112,7 +112,7 @@ export default function CourseSearch({ onPick, placeholder, large, autoFocus, ex
         aria-controls={listId}
         aria-autocomplete="list"
         aria-label="חיפוש קורס לפי שם או מספר"
-        placeholder={placeholder ?? "שם קורס או מספר, למשל: מבוא להנדסת חשמל"}
+        placeholder={placeholder ?? "שם קורס או מספר קורס"}
         value={q}
         autoFocus={autoFocus}
         onChange={(e) => {

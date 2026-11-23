@@ -19,7 +19,8 @@ function formerDept(dept: string, year: number): string | null {
 // GET /api/term?dept=361&degree=1&course=2251&year=2025&semester=1[&exam=final|a|b|special]
 // One semester per request, so the browser can show progress and the CDN caches each term on its own.
 export async function GET(req: NextRequest) {
-  if (isRateLimited(req, "term", 120)) {
+  // One course over 8 years by exam session is ~100 term requests, so the limit only stops abuse.
+  if (isRateLimited(req, "term", 600)) {
     return NextResponse.json({ error: "יותר מדי בקשות, נסו שוב בעוד דקה" }, { status: 429 });
   }
 

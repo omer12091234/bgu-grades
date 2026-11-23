@@ -63,6 +63,8 @@ function GradeApp() {
   const [names, setNames] = useState<Record<string, { he?: string; en?: string }>>({});
   const [excluded, setExcluded] = useState<{ key: string; ids: Set<string> }>({ key: "", ids: new Set() });
   const [reload, setReload] = useState(0);
+  // On phones the semester list starts collapsed so the chart is visible first.
+  const [railOpen, setRailOpen] = useState(false);
 
   const setParams = useCallback(
     (patch: Record<string, string | null>) => {
@@ -278,6 +280,14 @@ function GradeApp() {
                       </div>
                     </div>
                   )}
+                  <button className="rail-toggle" aria-expanded={railOpen} onClick={() => setRailOpen((o) => !o)}>
+                    <span>סמסטרים</span>
+                    <span className="muted">
+                      {visible.length} מתוך {okTerms.length} נבחרו
+                    </span>
+                    <span className="chev" aria-hidden>▾</span>
+                  </button>
+                  <div className={`rail-terms ${railOpen ? "open" : ""}`}>
                   <div className="rail-head">
                     <span>סמסטרים</span>
                     <button className="btn link small" onClick={setAll}>{allOn ? "נקה הכל" : "בחר הכל"}</button>
@@ -314,6 +324,7 @@ function GradeApp() {
                       </div>
                     ))}
                   </div>
+                </div>
                 </aside>
 
                 <div>
@@ -410,7 +421,7 @@ function TrendTab({ terms }: { terms: TermDistribution[] }) {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>מרצה</th><th>סמסטרים</th><th>נבחנים</th><th>ממוצע</th><th>חציון</th><th>עברו</th></tr>
+              <tr><th>מרצה</th><th>סמסטרים</th><th>נבחנים</th><th>ממוצע</th><th className="hide-sm">חציון</th><th>עברו</th></tr>
             </thead>
             <tbody>
               {byLecturer.map((g) => (
@@ -419,7 +430,7 @@ function TrendTab({ terms }: { terms: TermDistribution[] }) {
                   <td className="lecturer">{g.terms.map((t) => t.label).join(", ")}</td>
                   <td>{g.combined.n}</td>
                   <td>{fmt1(g.combined.stats.mean)}</td>
-                  <td>{fmt1(g.combined.stats.median)}</td>
+                  <td className="hide-sm">{fmt1(g.combined.stats.median)}</td>
                   <td>{pct(g.combined.stats.passRate)}</td>
                 </tr>
               ))}
@@ -468,7 +479,8 @@ function CompareTab(props: {
         {all.map((c, i) => (
           <span key={courseKey(c)} className="compare-chip">
             <span className="swatch" style={{ background: `var(--series-${(i % 4) + 1})` }} />
-            {nameOf(c)} <span className="muted ltr small">{formatCourseNumber(c)}</span>
+            {nameOf(c)}
+            {nameOf(c) !== formatCourseNumber(c) && <span className="muted ltr small">{formatCourseNumber(c)}</span>}
             {i > 0 && (
               <button aria-label={`הסר את ${nameOf(c)}`} onClick={() => onRemove(courseKey(c))}>×</button>
             )}
@@ -520,7 +532,7 @@ function CompareTab(props: {
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr><th>קורס</th><th>סמסטרים</th><th>נבחנים</th><th>ממוצע</th><th>חציון</th><th>סטיית תקן</th><th>עברו</th></tr>
+                  <tr><th>קורס</th><th className="hide-sm">סמסטרים</th><th>נבחנים</th><th>ממוצע</th><th>חציון</th><th className="hide-sm">סטיית תקן</th><th>עברו</th></tr>
                 </thead>
                 <tbody>
                   {ready.map((s) => (
@@ -529,11 +541,11 @@ function CompareTab(props: {
                         <span className="swatch" style={{ background: `var(--series-${(s.colorIndex % 4) + 1})` }} />
                         {s.name}
                       </td>
-                      <td>{s.terms.length}</td>
+                      <td className="hide-sm">{s.terms.length}</td>
                       <td>{s.combined.n}</td>
                       <td>{fmt1(s.combined.stats.mean)}</td>
                       <td>{fmt1(s.combined.stats.median)}</td>
-                      <td>{fmt1(s.combined.stats.stdev)}</td>
+                      <td className="hide-sm">{fmt1(s.combined.stats.stdev)}</td>
                       <td>{pct(s.combined.stats.passRate)}</td>
                     </tr>
                   ))}

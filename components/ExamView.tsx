@@ -71,7 +71,7 @@ export default function ExamView({ course, terms, overall }: Props) {
       <div className="table-wrap" style={{ marginTop: "1.25rem" }}>
         <table>
           <thead>
-            <tr><th>מועד</th><th>נבחנים</th><th>ממוצע</th><th>חציון</th><th>סטיית תקן</th><th>עברו</th></tr>
+            <tr><th>מועד</th><th>נבחנים</th><th>ממוצע</th><th>חציון</th><th className="hide-sm">סטיית תקן</th><th>עברו</th></tr>
           </thead>
           <tbody>
             {series.map((s) => (
@@ -80,16 +80,16 @@ export default function ExamView({ course, terms, overall }: Props) {
                 <td>{s.combined.n || "–"}</td>
                 <td>{fmt1(s.combined.stats.mean)}</td>
                 <td>{fmt1(s.combined.stats.median)}</td>
-                <td>{fmt1(s.combined.stats.stdev)}</td>
+                <td className="hide-sm">{fmt1(s.combined.stats.stdev)}</td>
                 <td>{pct(s.combined.stats.passRate)}</td>
               </tr>
             ))}
             <tr className="total">
-              <td>ציון סופי, כל הנבחנים</td>
+              <td className="wrap">ציון סופי, כל הנבחנים</td>
               <td>{overall.n}</td>
               <td>{fmt1(overall.stats.mean)}</td>
               <td>{fmt1(overall.stats.median)}</td>
-              <td>{fmt1(overall.stats.stdev)}</td>
+              <td className="hide-sm">{fmt1(overall.stats.stdev)}</td>
               <td>{pct(overall.stats.passRate)}</td>
             </tr>
           </tbody>
@@ -98,6 +98,7 @@ export default function ExamView({ course, terms, overall }: Props) {
 
       {terms.length > 1 && (
         <div className="table-wrap" style={{ marginTop: "1.25rem" }}>
+          <div className="small muted" style={{ marginBottom: ".35rem" }}>ממוצע בכל מועד לפי סמסטר, ולידו מספר הנבחנים</div>
           <table>
             <thead>
               <tr>
@@ -112,14 +113,14 @@ export default function ExamView({ course, terms, overall }: Props) {
                   {series.map((s) => {
                     const x = s.perTerm.get(t.termId);
                     return (
-                      <td key={s.key}>
+                      <td key={s.key} className="exam-cell">
                         {!x ? (
                           "–"
                         ) : x.status === "suppressed" ? (
                           "מוסתר"
                         ) : (
                           <>
-                            ממוצע <bdi>{fmt1(x.stats.mean)}</bdi> <span className="muted">· <bdi>{x.n}</bdi> נבחנים</span>
+                            <bdi>{fmt1(x.stats.mean)}</bdi> <span className="muted n"><bdi>{x.n}</bdi> נבחנים</span>
                           </>
                         )}
                       </td>

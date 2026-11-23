@@ -58,3 +58,18 @@ export function alpha(hex: string, a: number): string {
   const n = parseInt(m, 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
 }
+
+function subscribeNarrow(cb: () => void) {
+  const mq = window.matchMedia("(max-width: 600px)");
+  mq.addEventListener("change", cb);
+  return () => mq.removeEventListener("change", cb);
+}
+
+/** True on phone-width screens; charts use it to simplify labels. */
+export function useIsNarrow(): boolean {
+  return useSyncExternalStore(
+    subscribeNarrow,
+    () => window.matchMedia("(max-width: 600px)").matches,
+    () => false
+  );
+}

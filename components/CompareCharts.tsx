@@ -6,7 +6,7 @@ import {
 import { Line } from "react-chartjs-2";
 import type { TermDistribution } from "@/types";
 import { BUCKETS, bucketShares } from "@/lib/stats";
-import { useThemeColors } from "@/lib/useThemeColors";
+import { useIsNarrow, useThemeColors } from "@/lib/useThemeColors";
 import type { TermKey } from "@/lib/terms";
 import { termLabel } from "@/lib/terms";
 
@@ -80,7 +80,7 @@ export function CompareDistribution({ series }: { series: CompareSeries[] }) {
             },
           },
           scales: {
-            x: { grid: { display: false }, border: { color: c.line }, ticks: { color: c.muted, font: { ...FONT, size: 11 } } },
+            x: { grid: { display: false }, border: { color: c.line }, ticks: { color: c.muted, font: { ...FONT, size: 11 }, maxRotation: 0, autoSkip: true } },
             y: {
               beginAtZero: true,
               border: { display: false },
@@ -96,6 +96,7 @@ export function CompareDistribution({ series }: { series: CompareSeries[] }) {
 
 export function CompareTrend({ series, termList }: { series: CompareSeries[]; termList: TermKey[] }) {
   const c = useThemeColors();
+  const narrow = useIsNarrow();
   const o = baseOptions(c);
   const chrono = [...termList].reverse();
   const used = chrono.filter((t) => series.some((s) => s.terms.some((x) => x.termId === t.id && x.status === "ok")));
@@ -134,13 +135,13 @@ export function CompareTrend({ series, termList }: { series: CompareSeries[]; te
             },
           },
           scales: {
-            x: { grid: { display: false }, border: { color: c.line }, ticks: { color: c.muted, font: { ...FONT, size: 11 }, maxRotation: 0 } },
+            x: { grid: { display: false }, border: { color: c.line }, ticks: { color: c.muted, font: { ...FONT, size: 11 }, maxRotation: 0, autoSkip: true } },
             y: {
               suggestedMin: 50,
               suggestedMax: 100,
               border: { display: false },
               grid: { color: c.line },
-              title: { display: true, text: "ממוצע", color: c.muted, font: FONT },
+              title: { display: !narrow, text: "ממוצע", color: c.muted, font: FONT },
               ticks: { color: c.muted, font: { ...FONT, size: 11 } },
             },
           },
