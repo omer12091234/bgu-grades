@@ -1,49 +1,106 @@
-# BGU Grade Distribution Explorer
+<div dir="rtl">
 
-A Next.js web app for viewing course grade distributions at Ben-Gurion University.
+# ציונים · בן-גוריון
 
-## Quick start (local)
+**התפלגות ציונים, מרצים ומגמות לאורך השנים בקורסים של אוניברסיטת בן-גוריון בנגב.**
+
+חפשו קורס לפי שם או מספר וראו איך התפלגו הציונים בכל סמסטר, מי לימד בכל סמסטר, איך הממוצע השתנה לאורך השנים, והשוו בין כמה קורסים על אותו גרף.
+
+**דמו: [DEMO_URL](DEMO_URL)**
+
+![התפלגות ציונים בקורס](docs/screenshots/distribution.png)
+
+## מה אפשר לעשות
+
+| | |
+|---|---|
+| **חיפוש לפי שם קורס** | מקלידים חלק משם הקורס ומקבלים רשימה של קורסים עם המספר, השם באנגלית ומתי נלמד לאחרונה. אפשר גם להקליד מספר (`361.1.1021`). |
+| **התפלגות ציונים** | כל הציונים מ־1 עד 100, בכל הסמסטרים יחד או בכל סמסטר בנפרד, עם ממוצע, חציון, סטיית תקן ואחוז עוברים. אפשר לבחור אילו סמסטרים ייכללו. |
+| **מרצים לפי סמסטר** | ליד כל סמסטר מופיע מי לימד את השיעור באותו סמסטר. |
+| **מגמה ומרצים** | גרף של הממוצע, החציון ואחוז העוברים לאורך הסמסטרים, עם סימון של החלפת מרצה, וטבלה שמסכמת את הציונים לפי מרצה. |
+| **השוואה בין קורסים** | עד ארבעה קורסים על אותו גרף: התפלגות באחוזים (כדי שקורסים בגדלים שונים יהיו ברי השוואה) וממוצע לאורך הזמן. |
+| **שיתוף** | כל מצב נשמר בכתובת, כך שאפשר לשלוח קישור לקורס, לטאב או להשוואה. |
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/search.png" alt="חיפוש קורס לפי שם"><br><sub>חיפוש לפי שם קורס</sub></td>
+<td width="50%"><img src="docs/screenshots/trend.png" alt="מגמה לאורך הסמסטרים ולפי מרצה"><br><sub>מגמה לאורך הסמסטרים ולפי מרצה</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/compare.png" alt="השוואה בין קורסים"><br><sub>השוואה בין קורסים</sub></td>
+<td width="50%"><img src="docs/screenshots/loading.png" alt="מסך טעינה"><br><sub>טעינה עם התקדמות לפי סמסטר</sub></td>
+</tr>
+</table>
+
+<p align="center"><img src="docs/screenshots/mobile-dark.png" alt="תצוגת מובייל במצב כהה" width="300"><br><sub>מובייל, מצב כהה</sub></p>
+
+## הרצה מקומית
+
+צריך Node.js 20 ומעלה.
 
 ```bash
+git clone https://github.com/omer12091234/bgu-grades.git
+cd bgu-grades
 npm install
 npm run dev
 ```
 
-Open http://localhost:3000 — try department `361`, degree `1`, course `2251`.
+ואז לפתוח את http://localhost:3000. לא צריך משתני סביבה או מפתחות.
 
-## Deploy to Vercel (~2 minutes)
+פקודות נוספות:
 
-1. Push this folder to a GitHub repo
-2. Go to vercel.com → **New Project** → import the repo
-3. Framework is auto-detected as Next.js → click **Deploy**
-
-No environment variables needed.
-
-## Key files
-
-| File | What it does |
-|---|---|
-| `app/api/series/route.ts` | Proxy: receives the browser's request, POSTs to BGU, returns JSON |
-| `lib/fetcher.ts` | Term expansion, sequential upstream calls, in-memory cache, rate limiting |
-| `lib/parser.ts` | XML→normalized TermDistribution. **Adjust field names here** after capturing a real response |
-| `types/index.ts` | Shared TypeScript types |
-| `components/GradeChart.tsx` | Bar chart (Chart.js) |
-| `components/StatsTable.tsx` | Stats table with CSV export |
-| `app/page.tsx` | Main RTL Hebrew UI |
-
-## Adjusting the XML parser
-
-In `lib/parser.ts`, change these constants to match your real fixture:
-
-```ts
-const XML_GRADE_FIELD      = "GRADE";      // actual element name for grade value
-const XML_COUNT_FIELD      = "CNT";        // actual element name for student count
-const XML_COURSE_NAME_FIELD = "COURSE_NAME";
-const XML_DEPT_NAME_FIELD   = "DEPT_NAME";
+```bash
+npm run build   # בנייה לפרודקשן
+npm run start   # הרצת הבנייה
+npm run lint    # בדיקת קוד
 ```
 
-## Privacy & compliance
+## פריסה ל־Vercel
 
-- `P_FOR_STUDENT=0` is hardcoded server-side; client cannot override it.
-- Terms with fewer than 5 students are suppressed.
-- No response bodies are logged.
+הריפו מחובר ל־Vercel: כל דחיפה ל־`main` מתפרסמת אוטומטית, וכל ענף אחר מקבל כתובת preview. כדי לפרוס עותק משלכם: **New Project** ב־Vercel ← בחירת הריפו ← **Deploy**. לא צריך הגדרות.
+
+## מאיפה הנתונים
+
+| מקור | מה לוקחים משם |
+|---|---|
+| מערכת הדוחות (`reports4u22.bgu.ac.il`, דוח `SCRR016w`) | הציונים של כל סטודנט בקורס בסמסטר, בלי פרטים מזהים |
+| קובץ הקורסים (`bgu4u.bgu.ac.il`, שנתון) | חיפוש קורס לפי שם, ושמות המרצים בכל סמסטר |
+
+שני המקורות ציבוריים ולא דורשים התחברות. השרתים שלהם ישנים ואיטיים ומחזירים קידוד Windows-1255, ולכן כל הגישה אליהם עוברת דרך השרת של האתר.
+
+### מטמון (cache)
+
+ציונים של סמסטר שהסתיים כמעט לא משתנים, אז אין סיבה לפנות לאוניברסיטה בכל צפייה:
+
+| מידע | נשמר ל־ | איפה |
+|---|---|---|
+| ציונים של שנה שהסתיימה | 30 יום | Data Cache של Next.js + CDN של Vercel |
+| ציונים של השנה הנוכחית | 6 שעות | אותו דבר |
+| מרצים של סמסטר שעבר | 180 יום | Data Cache |
+| מרצים בשנה הנוכחית | שבוע | Data Cache |
+| תוצאות חיפוש לפי שם | יום | Data Cache + CDN |
+
+הדפדפן טוען סמסטר אחד בכל בקשה (`/api/term`), כך שכל סמסטר נשמר בנפרד ב־CDN, והמסך מציג התקדמות בזמן הטעינה. שגיאות לא נשמרות במטמון.
+
+## מבנה הקוד
+
+| קובץ | תפקיד |
+|---|---|
+| `app/page.tsx` | הממשק: חיפוש, טאבים, סרגל סמסטרים, השוואה |
+| `app/api/term/route.ts` | ציונים ומרצים של סמסטר אחד בקורס |
+| `app/api/courses/route.ts` | חיפוש קורסים לפי שם |
+| `lib/fetcher.ts` | פנייה למערכת הדוחות ושמירה במטמון |
+| `lib/catalog.ts` | חיפוש בקובץ הקורסים וחילוץ שמות המרצים |
+| `lib/parser.ts` | פענוח ה־XML של הדוח |
+| `lib/stats.ts` | ממוצע, חציון, התפלגות, סיכום לפי מרצה |
+| `lib/useCourseSeries.ts` | טעינת הסמסטרים בדפדפן, שתי בקשות במקביל |
+| `components/` | גרפים (Chart.js), חיפוש, טבלאות ומסך טעינה |
+
+## פרטיות
+
+- הדוח נשלף תמיד במצב ציבורי (`P_FOR_STUDENT` לא נשלח). הלקוח לא יכול לשנות את זה.
+- סמסטרים עם פחות מ־5 נבחנים מוסתרים.
+- תוכן התשובות מהאוניברסיטה לא נכתב ללוגים.
+- האתר אינו אתר רשמי של אוניברסיטת בן-גוריון.
+
+</div>

@@ -1,31 +1,16 @@
 "use client";
 import {
   Chart as ChartJS,
-  CategoryScale, LinearScale, BarElement, Tooltip, Legend,
+  CategoryScale, LinearScale, BarElement, LineElement, PointElement, Tooltip, Legend, Filler,
 } from "chart.js";
-import { Bar } from "react-chartjs-2";
+import { Bar, Line } from "react-chartjs-2";
 import type { TermDistribution } from "@/types";
-import { CANONICAL_BINS, FAIL_THRESHOLD } from "@/lib/parser";
+import { BUCKETS, CANONICAL_BINS, FAIL_THRESHOLD, bucketShares } from "@/lib/stats";
+import { alpha, useThemeColors } from "@/lib/useThemeColors";
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip, Legend);
+ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Tooltip, Legend, Filler);
 
-const COLOR_FAIL = "rgba(224, 82, 82, 0.85)";
-const COLOR_PASS = "rgba(79, 127, 255, 0.85)";
-
-const TERM_COLORS_PASS = [
-  "rgba(79,127,255,0.8)",
-  "rgba(124,95,245,0.8)",
-  "rgba(46,196,182,0.8)",
-  "rgba(244,162,97,0.8)",
-  "rgba(90,200,150,0.8)",
-];
-const TERM_COLORS_FAIL = [
-  "rgba(224,82,82,0.8)",
-  "rgba(200,60,180,0.8)",
-  "rgba(220,100,60,0.8)",
-  "rgba(210,70,70,0.8)",
-  "rgba(230,90,90,0.8)",
-];
+const FONT = { family: "Heebo, system-ui, sans-serif" };
 
 interface Props {
   terms: TermDistribution[];
@@ -34,83 +19,128 @@ interface Props {
 }
 
 export default function GradeChart({ terms, mode, combined }: Props) {
-  const labels = CANONICAL_BINS.map((b) => b.label);
+  const c = useThemeColors();
 
-  const datasets =
-    mode === "combined"
-      ? [
-          {
-            label: "סה״כ",
-            data: combined.bins.map((b) => b.count),
-            backgroundColor: CANONICAL_BINS.map((b) =>
-              b.min < FAIL_THRESHOLD ? COLOR_FAIL : COLOR_PASS
-            ),
-            borderRadius: 2,
-            borderSkipped: false,
-          },
-        ]
-      : terms
-          .filter((t) => t.status === "ok")
-          .map((term, idx) => ({
-            label: term.label,
-            data: term.bins.map((b) => b.count),
-            // Per-semester: still color fail/pass by grade position
-            backgroundColor: CANONICAL_BINS.map((b) =>
-              b.min < FAIL_THRESHOLD
-                ? TERM_COLORS_FAIL[idx % TERM_COLORS_FAIL.length]
-                : TERM_COLORS_PASS[idx % TERM_COLORS_PASS.length]
-            ),
-            borderRadius: 2,
-            borderSkipped: false,
-          }));
-
-  const options = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        display: mode === "per-semester",
-        labels: { color: "#e8eaf6", font: { family: "Heebo, sans-serif", size: 12 } },
-      },
-      tooltip: {
-        callbacks: {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          label: (ctx: any) => {
-            const grade = ctx.dataIndex + 1;
-            const count = ctx.parsed.y;
-            const status = grade < FAIL_THRESHOLD ? "נכשל" : "עבר";
-            return `ציון ${grade} (${status}): ${count} סטודנטים`;
-          },
-        },
-      },
-    },
-    scales: {
-      x: {
-        ticks: {
-          color: "#8b90b8",
-          font: { family: "Heebo, sans-serif", size: 9 },
-          // Show every 5th label to avoid crowding 100 labels
-          callback: (_: unknown, index: number) =>
-            (index + 1) % 5 === 0 || index === 0 ? String(index + 1) : "",
-          maxRotation: 0,
-        },
-        grid: { color: "#2d3150" },
-      },
-      y: {
-        ticks: { color: "#8b90b8", font: { family: "Heebo, sans-serif", size: 11 }, stepSize: 1 },
-        grid: { color: "#2d3150" },
-        beginAtZero: true,
-      },
-    },
+  const tooltip = {
+    rtl: true,
+    backgroundColor: c.ink,
+    titleColor: c.surface,
+    bodyColor: c.surface,
+    titleFont: FONT,
+    bodyFont: FONT,
+    padding: 10,
+    cornerRadius: 4,
+    displayColors: mode === "per-semester",
   };
 
-  return (
-    <div className="chart-wrap" role="img" aria-label="גרף התפלגות ציונים">
-      <div className="chart-legend-inline">
-        <span className="legend-dot fail"></span><span>כישלון (מתחת ל-{FAIL_THRESHOLD})</span>
-        <span className="legend-dot pass"></span><span>עובר</span>
+  if (mode === "combined") {
+    const data = {
+      labels: CANONICAL_BINS.map((b) => b.label),
+      datasets: [
+        {
+          label: "סטודנטים",
+          data: combined.bins.map((b) => b.count),
+          backgroundColor: CANONICAL_BINS.map((b) => (b.min < FAIL_THRESHOLD ? c.fail : c.accent)),
+          borderRadius: 1,
+          barPercentage: 0.9,
+          categoryPercentage: 1,
+        },
+      ],
+    };
+    return (
+      <div className="chart-box" role="img" aria-label="התפלגות ציונים משולבת">
+        <Bar
+          data={data}
+          options={{
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: { duration: 250 },
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                ...tooltip,
+                callbacks: {
+                  title: (items) => `ציון ${items[0].label}`,
+                  label: (ctx) => `${ctx.parsed.y} סטודנטים`,
+                },
+              },
+            },
+            scales: {
+              x: {
+                grid: { display: false },
+                border: { color: c.line },
+                ticks: {
+                  color: c.muted,
+                  font: { ...FONT, size: 11 },
+                  maxRotation: 0,
+                  autoSkip: false,
+                  callback: (_v, i) => ((i + 1) % 10 === 0 || i === 0 ? String(i + 1) : ""),
+                },
+              },
+              y: {
+                beginAtZero: true,
+                border: { display: false },
+                grid: { color: c.line },
+                ticks: { color: c.muted, font: { ...FONT, size: 11 }, precision: 0 },
+              },
+            },
+          }}
+        />
       </div>
-      <Bar data={{ labels, datasets }} options={options} />
+    );
+  }
+
+  // Per-semester: share of students per 5-point bucket, newest semester darkest.
+  const ok = terms.filter((t) => t.status === "ok");
+  const data = {
+    labels: BUCKETS.map((b) => b.label),
+    datasets: ok.map((t, i) => {
+      const a = ok.length === 1 ? 1 : 1 - (i / (ok.length - 1)) * 0.7;
+      return {
+        label: t.label,
+        data: bucketShares(t).map((v) => +(v * 100).toFixed(1)),
+        borderColor: alpha(c.accent, a),
+        backgroundColor: alpha(c.accent, a),
+        borderWidth: i === 0 ? 2.5 : 1.5,
+        pointRadius: 2,
+        tension: 0.25,
+      };
+    }),
+  };
+  return (
+    <div className="chart-box" role="img" aria-label="התפלגות ציונים לפי סמסטר">
+      <Line
+        data={data}
+        options={{
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: { duration: 250 },
+          interaction: { mode: "index", intersect: false },
+          plugins: {
+            legend: {
+              position: "bottom",
+              rtl: true,
+              labels: { color: c.ink, font: { ...FONT, size: 12 }, boxWidth: 12, boxHeight: 2 },
+            },
+            tooltip: {
+              ...tooltip,
+              callbacks: {
+                title: (items) => `ציונים ${items[0].label}`,
+                label: (ctx) => ` ${ctx.dataset.label}: ${ctx.parsed.y}%`,
+              },
+            },
+          },
+          scales: {
+            x: { grid: { display: false }, border: { color: c.line }, ticks: { color: c.muted, font: { ...FONT, size: 11 } } },
+            y: {
+              beginAtZero: true,
+              border: { display: false },
+              grid: { color: c.line },
+              ticks: { color: c.muted, font: { ...FONT, size: 11 }, callback: (v) => `${v}%` },
+            },
+          },
+        }}
+      />
     </div>
   );
 }

@@ -26,20 +26,26 @@ export type TermDistribution = {
   stats: TermStats;
   status: "ok" | "empty" | "suppressed" | "error";
   errorMessage?: string;
+  /** Lecturers of the lecture groups (שעור) in this semester, from the course catalog. */
+  lecturers?: string[];
 };
 
-export type SeriesResponse = {
-  terms: TermDistribution[];
-  combined: TermDistribution;
-  meta: {
-    dept: string;
-    degree: string;
-    course: string;
-    lookback: number;
-    semesterFilter: number | null;
-    fetchedAt: string;
-    failures: { termId: string; reason: string }[];
-  };
+/** A course as identified by BGU: department.degree.course, e.g. 361.1.2251 */
+export type CourseRef = {
+  dept: string;
+  degree: string;
+  course: string;
 };
+
+export type CourseSearchResult = CourseRef & {
+  /** Display number, e.g. "361.1.2251" */
+  number: string;
+  nameHe: string;
+  nameEn: string;
+  /** Last term the course was offered, e.g. "2026-2" */
+  lastActive: string;
+};
+
+export type TermResponse = TermDistribution;
 
 export const SUPPRESSION_THRESHOLD = 5;

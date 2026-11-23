@@ -1,468 +1,515 @@
 "use client";
-import { useState, useEffect, useCallback, useMemo, Suspense } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
-import type { SeriesResponse, TermDistribution } from "@/types";
+import Link from "next/link";
+import type { CourseRef, TermDistribution } from "@/types";
+import CourseSearch, { type PickedCourse } from "@/components/CourseSearch";
+import Loader from "@/components/Loader";
 import StatsTable from "@/components/StatsTable";
-import { combinedDistribution } from "@/lib/parser";
+import { combinedDistribution, summariseByLecturer, FAIL_THRESHOLD } from "@/lib/stats";
+import { buildTermList, courseKey, formatCourseNumber, hebrewYear, parseCourseNumber, SEM_LETTER } from "@/lib/terms";
+import { useCourseSeries, type SeriesState } from "@/lib/useCourseSeries";
+import type { CompareSeries } from "@/components/CompareCharts";
 
 const GradeChart = dynamic(() => import("@/components/GradeChart"), { ssr: false });
+const TrendChart = dynamic(() => import("@/components/TrendChart"), { ssr: false });
+const CompareDistribution = dynamic(() => import("@/components/CompareCharts").then((m) => m.CompareDistribution), { ssr: false });
+const CompareTrend = dynamic(() => import("@/components/CompareCharts").then((m) => m.CompareTrend), { ssr: false });
 
-function fmt1(n: number | null) {
-  if (n === null) return "–";
-  return n.toFixed(1);
+const MAX_COMPARE = 4;
+const REPO_URL = "https://github.com/omer12091234/bgu-grades";
+
+const EXAMPLES: PickedCourse[] = [
+  { dept: "361", degree: "1", course: "1021", nameHe: "מבוא להנדסת חשמל" },
+  { dept: "214", degree: "1", course: "9711", nameHe: "חדו״א 1 להנדסה" },
+  { dept: "201", degree: "1", course: "1211", nameHe: "אלגברה לינארית 1" },
+];
+
+type Tab = "dist" | "trend" | "compare";
+type View = "combined" | "per-semester";
+
+const fmt1 = (n: number | null) => (n === null ? "–" : n.toFixed(1));
+const pct = (n: number | null) => (n === null ? "–" : (n * 100).toFixed(0) + "%");
+
+function readCourse(params: URLSearchParams): CourseRef | null {
+  const c = params.get("c");
+  if (c) return parseCourseNumber(c);
+  // Links from the first version of the site
+  const dept = params.get("dept"), degree = params.get("degree"), course = params.get("course");
+  if (dept && degree && course && [dept, degree, course].every((v) => /^\d{1,6}$/.test(v))) return { dept, degree, course };
+  return null;
 }
-
-function currentAcademicYear() {
-  const now = new Date();
-  return now.getMonth() >= 9 ? now.getFullYear() + 1 : now.getFullYear();
-}
-
-// Build the full list of year+semester combos for a given lookback+semesterFilter
-function buildTermList(lookback: number, semesterFilter: string) {
-  const curYear = currentAcademicYear();
-  const years = Array.from({ length: lookback }, (_, i) => curYear - i);
-  const sems = semesterFilter === "all" ? [1, 2] : [Number(semesterFilter)];
-  return years.flatMap(y => sems.map(s => ({ year: y, semester: s, id: `${y}-${s}` })));
-}
-
-const SEM_LABELS: Record<number, string> = { 1: "א׳", 2: "ב׳", 3: "ג׳" };
 
 function GradeApp() {
   const router = useRouter();
   const params = useSearchParams();
 
-  // ── Search bar state ────────────────────────────────────────────────────
-  const [dept,     setDept]     = useState(params.get("dept")   ?? "");
-  const [degree,   setDegree]   = useState(params.get("degree") ?? "");
-  const [course,   setCourse]   = useState(params.get("course") ?? "");
-  const [lookback, setLookback] = useState(Number(params.get("lookback") ?? 3));
-  const [semester, setSemester] = useState(params.get("semester") ?? "all");
-
-  // ── Display state ───────────────────────────────────────────────────────
-  const [viewMode, setViewMode] = useState<"combined" | "per-semester">(
-    (params.get("view") as "combined" | "per-semester") ?? "combined"
+  const course = useMemo(() => readCourse(new URLSearchParams(params.toString())), [params]);
+  const compare = useMemo(
+    () =>
+      (params.get("cmp") ?? "")
+        .split(",")
+        .map((s) => parseCourseNumber(s))
+        .filter((c): c is CourseRef => !!c)
+        .slice(0, MAX_COMPARE - 1),
+    [params]
   );
+  const lookback = Math.min(5, Math.max(1, Number(params.get("y") ?? params.get("lookback") ?? 3) || 3));
+  const semester = ["1", "2"].includes(params.get("sem") ?? params.get("semester") ?? "") ? (params.get("sem") ?? params.get("semester"))! : "all";
+  const tab = (["dist", "trend", "compare"].includes(params.get("tab") ?? "") ? params.get("tab") : "dist") as Tab;
+  const view = (params.get("view") === "per-semester" ? "per-semester" : "combined") as View;
 
-  // ── Sidebar: which specific terms are checked ───────────────────────────
-  // null = not yet initialised (use all terms from response)
-  const [checkedTerms, setCheckedTerms] = useState<Set<string> | null>(null);
+  const [names, setNames] = useState<Record<string, { he?: string; en?: string }>>({});
+  const [excluded, setExcluded] = useState<{ key: string; ids: Set<string> }>({ key: "", ids: new Set() });
+  const [reload, setReload] = useState(0);
 
-  // ── Fetch state ─────────────────────────────────────────────────────────
-  const [data,    setData]    = useState<SeriesResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState<string | null>(null);
-  const [queried, setQueried] = useState(false);
-
-  // ── URL sync ────────────────────────────────────────────────────────────
-  const updateUrl = useCallback((d: string, deg: string, c: string, lb: number, sem: string, view: string) => {
-    if (!d || !deg || !c) return;
-    const p = new URLSearchParams({ dept: d, degree: deg, course: c, lookback: String(lb), semester: sem, view });
-    router.replace("?" + p.toString(), { scroll: false });
-  }, [router]);
-
-  // ── Fetch ───────────────────────────────────────────────────────────────
-  const doFetch = useCallback(async (d: string, deg: string, c: string, lb: number, sem: string) => {
-    if (!d || !deg || !c) return;
-    setLoading(true); setError(null); setQueried(true); setCheckedTerms(null);
-    try {
-      const semParam = sem === "all" ? "" : `&semester=${sem}`;
-      const res = await fetch(`/api/series?dept=${d}&degree=${deg}&course=${c}&lookback=${lb}${semParam}`);
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j.error ?? `שגיאה ${res.status}`);
+  const setParams = useCallback(
+    (patch: Record<string, string | null>) => {
+      const p = new URLSearchParams(params.toString());
+      for (const k of ["dept", "degree", "course", "lookback", "semester"]) p.delete(k);
+      if (course && !p.get("c")) p.set("c", formatCourseNumber(course));
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === null || v === "") p.delete(k);
+        else p.set(k, v);
       }
-      const json: SeriesResponse = await res.json();
-      setData(json);
-      // Default: all ok terms checked
-      setCheckedTerms(new Set(json.terms.filter(t => t.status === "ok").map(t => t.termId)));
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+      router.push("?" + p.toString(), { scroll: false });
+    },
+    [params, router, course]
+  );
 
-  // Auto-fetch on load if URL has params
-  useEffect(() => {
-    const d   = params.get("dept")   ?? "";
-    const deg = params.get("degree") ?? "";
-    const c   = params.get("course") ?? "";
-    const lb  = Number(params.get("lookback") ?? 3);
-    const sem = params.get("semester") ?? "all";
-    if (d && deg && c) doFetch(d, deg, c, lb, sem);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ── Handlers ────────────────────────────────────────────────────────────
-  const handleSubmit = () => {
-    updateUrl(dept, degree, course, lookback, semester, viewMode);
-    doFetch(dept, degree, course, lookback, semester);
+  const rememberName = (c: PickedCourse) => {
+    if (c.nameHe) setNames((n) => ({ ...n, [courseKey(c)]: { he: c.nameHe, en: c.nameEn } }));
   };
 
-  const handlePrefill = () => {
-    setDept("361"); setDegree("1"); setCourse("2251");
-    updateUrl("361", "1", "2251", lookback, semester, viewMode);
-    doFetch("361", "1", "2251", lookback, semester);
+  const openCourse = (c: PickedCourse) => {
+    rememberName(c);
+    const p = new URLSearchParams();
+    p.set("c", formatCourseNumber(c));
+    if (lookback !== 3) p.set("y", String(lookback));
+    if (semester !== "all") p.set("sem", semester);
+    router.push("?" + p.toString(), { scroll: false });
   };
 
-  const handleView = (v: "combined" | "per-semester") => {
-    setViewMode(v);
-    updateUrl(dept, degree, course, lookback, semester, v);
+  const addCompare = (c: PickedCourse) => {
+    rememberName(c);
+    const list = [...compare.map(formatCourseNumber), formatCourseNumber(c)];
+    setParams({ cmp: [...new Set(list)].slice(0, MAX_COMPARE - 1).join(","), tab: "compare" });
+  };
+  const removeCompare = (key: string) => {
+    setParams({ cmp: compare.filter((c) => courseKey(c) !== key).map(formatCourseNumber).join(",") });
   };
 
+  const termList = useMemo(() => buildTermList(lookback, semester), [lookback, semester]);
+  const allCourses = useMemo(() => (course ? [course, ...compare] : []), [course, compare]);
+  const series = useCourseSeries(allCourses, termList, reload);
+
+  if (!course) {
+    return (
+      <Shell>
+        <div className="container">
+          <section className="landing">
+            <h1>התפלגות ציונים בקורסים של אוניברסיטת בן-גוריון</h1>
+            <p className="lead">
+              חפשו קורס לפי שם או מספר וראו איך התפלגו הציונים בכל סמסטר, מי לימד, ואיך הממוצע השתנה לאורך השנים.
+            </p>
+            <CourseSearch onPick={openCourse} large autoFocus />
+            <div className="examples">
+              <span className="muted">לדוגמה:</span>
+              {EXAMPLES.map((e) => (
+                <button key={courseKey(e)} className="chip" onClick={() => openCourse(e)}>
+                  {e.nameHe}
+                </button>
+              ))}
+            </div>
+            <div className="howto">
+              <div>
+                <h3>התפלגות</h3>
+                <p>כל הציונים מ־1 עד 100, בכל סמסטר או בכולם יחד, עם ממוצע, חציון ואחוז עוברים.</p>
+              </div>
+              <div>
+                <h3>מגמה ומרצים</h3>
+                <p>איך השתנו הציונים לאורך השנים, ומה קרה כשהמרצה התחלף.</p>
+              </div>
+              <div>
+                <h3>השוואה</h3>
+                <p>עד ארבעה קורסים על אותו גרף — למשל קורס בחירה מול חלופה שלו.</p>
+              </div>
+            </div>
+          </section>
+        </div>
+      </Shell>
+    );
+  }
+
+  const key = courseKey(course);
+  const main: SeriesState | undefined = series[key];
+  const terms = main?.terms ?? [];
+  const okTerms = terms.filter((t) => t.status === "ok");
+  const anyName = names[key]?.he ?? terms.find((t) => t.courseName)?.courseName;
+  const deptName = terms.find((t) => t.departmentName)?.departmentName;
+  const failures = terms.filter((t) => t.status === "error");
+  const loadingMain = !main || main.loading;
+
+  const exclIds = excluded.key === key + lookback + semester ? excluded.ids : new Set<string>();
+  const visible = okTerms.filter((t) => !exclIds.has(t.termId));
+  const visibleCombined = combinedDistribution(visible);
   const toggleTerm = (id: string) => {
-    setCheckedTerms(prev => {
-      const next = new Set(prev ?? []);
-      if (next.has(id)) { next.delete(id); } else { next.add(id); }
-      return next;
-    });
+    const next = new Set(exclIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setExcluded({ key: key + lookback + semester, ids: next });
   };
+  const allOn = exclIds.size === 0;
+  const setAll = () =>
+    setExcluded({ key: key + lookback + semester, ids: allOn ? new Set(okTerms.map((t) => t.termId)) : new Set() });
 
-  const toggleAll = (ids: string[], allChecked: boolean) => {
-    setCheckedTerms(prev => {
-      const next = new Set(prev ?? []);
-      if (allChecked) { ids.forEach(id => next.delete(id)); }
-      else            { ids.forEach(id => next.add(id)); }
-      return next;
-    });
-  };
-
-  // ── Derived data ─────────────────────────────────────────────────────────
-  const allTerms = data?.terms ?? [];
-  const okTerms  = allTerms.filter(t => t.status === "ok");
-
-  // Terms visible after sidebar filter
-  const visibleTerms: TermDistribution[] = useMemo(() => {
-    if (!checkedTerms) return okTerms;
-    return okTerms.filter(t => checkedTerms.has(t.termId));
-  }, [okTerms, checkedTerms]);
-
-  // Recompute combined from visible terms only
-  const visibleCombined: TermDistribution = useMemo(
-    () => combinedDistribution(visibleTerms),
-    [visibleTerms]
-  );
-
-  const anyOk    = okTerms.length > 0;
-  const anySupp  = allTerms.some(t => t.status === "suppressed");
-  const failures = data?.meta.failures ?? [];
-
-  // Sidebar term list: all possible terms in the lookback window
-  const sidebarTerms = useMemo(
-    () => buildTermList(lookback, semester),
-    [lookback, semester]
-  );
-
-  // Group sidebar by year for display
-  const sidebarByYear = useMemo(() => {
-    const map = new Map<number, { semester: number; id: string }[]>();
-    for (const { year, semester: s, id } of sidebarTerms) {
-      if (!map.has(year)) map.set(year, []);
-      map.get(year)!.push({ semester: s, id });
-    }
-    return [...map.entries()].sort((a, b) => b[0] - a[0]);
-  }, [sidebarTerms]);
-
-  const termHasData = (id: string) => okTerms.some(t => t.termId === id);
-  const allSidebarIds = sidebarTerms.filter(t => termHasData(t.id)).map(t => t.id);
-  const allChecked = allSidebarIds.length > 0 && allSidebarIds.every(id => checkedTerms?.has(id));
+  const termById = new Map(terms.map((t) => [t.termId, t]));
+  const years = [...new Set(termList.map((t) => t.year))];
+  const lecturersNow = okTerms[0]?.lecturers;
 
   return (
-    <>
-      {/* ── Header ── */}
-      <header className="site-header">
-        <div className="container">
-          <div className="inner">
-            <div className="logo">התפלגות ציונים <span>BGU</span></div>
-            <div className="query-bar">
-              <div className="field">
-                <label htmlFor="dept">מחלקה</label>
-                <input id="dept" className="ltr" placeholder="361" value={dept}
-                  onChange={e => setDept(e.target.value.replace(/\D/g, ""))}
-                  onKeyDown={e => e.key === "Enter" && handleSubmit()} maxLength={6} />
-              </div>
-              <div className="field">
-                <label htmlFor="degree">תואר</label>
-                <input id="degree" className="ltr" placeholder="1" value={degree}
-                  onChange={e => setDegree(e.target.value.replace(/\D/g, ""))}
-                  onKeyDown={e => e.key === "Enter" && handleSubmit()} maxLength={2} />
-              </div>
-              <div className="field">
-                <label htmlFor="course">קורס</label>
-                <input id="course" className="ltr" placeholder="2251" value={course}
-                  onChange={e => setCourse(e.target.value.replace(/\D/g, ""))}
-                  onKeyDown={e => e.key === "Enter" && handleSubmit()} maxLength={6} />
-              </div>
-              {/* ── Lookback selector in header ── */}
-              <div className="field">
-                <label>שנים אחורה</label>
-                <div className="seg" role="group" aria-label="שנים אחורה">
-                  {[1,2,3,4,5].map(n => (
-                    <button key={n} className={lookback === n ? "active" : ""}
-                      onClick={() => setLookback(n)}>{n}</button>
-                  ))}
-                </div>
-              </div>
-              {/* ── Semester filter in header ── */}
-              <div className="field">
-                <label>סמסטר</label>
-                <div className="seg" role="group" aria-label="סמסטר">
-                  <button className={semester === "all" ? "active" : ""} onClick={() => setSemester("all")}>הכל</button>
-                  <button className={semester === "1"   ? "active" : ""} onClick={() => setSemester("1")}>א׳</button>
-                  <button className={semester === "2"   ? "active" : ""} onClick={() => setSemester("2")}>ב׳</button>
-                </div>
-              </div>
-              <button className="btn" onClick={handleSubmit}
-                disabled={!dept || !degree || !course || loading}>
-                {loading ? "טוען…" : "הצג"}
-              </button>
+    <Shell headerSearch={<CourseSearch onPick={openCourse} placeholder="חיפוש קורס אחר…" />}>
+      <div className="container">
+        <div className="course-head">
+          <div>
+            <h1>{anyName ?? `קורס ${formatCourseNumber(course)}`}</h1>
+            <div className="meta">
+              <span className="ltr">{formatCourseNumber(course)}</span>
+              {names[key]?.en && <span className="ltr">{names[key]?.en}</span>}
+              {deptName && <span>{deptName}</span>}
+              {lecturersNow?.length ? <span>מרצה אחרון: {lecturersNow.join(", ")}</span> : null}
             </div>
           </div>
         </div>
-      </header>
 
-      {/* ── Main ── */}
-      <main>
-        <div className="container">
-
-          {/* Empty state */}
-          {!queried && !loading && (
-            <div className="empty-state">
-              <h2>הכנס פרטי קורס להצגת התפלגות הציונים</h2>
-              <p className="muted">לפי מחלקה, תואר ומספר קורס</p>
-              <button className="prefill-btn" onClick={handlePrefill}>
-                נסה דוגמה: מחלקה 361 / תואר 1 / קורס 2251
-              </button>
+        <div className="toolbar">
+          <div className="group">
+            <span>טווח</span>
+            <div className="seg" role="group" aria-label="מספר שנים אחורה">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button key={n} className={lookback === n ? "active" : ""} onClick={() => setParams({ y: n === 3 ? null : String(n) })}>
+                  {n === 1 ? "שנה" : `${n} שנים`}
+                </button>
+              ))}
             </div>
-          )}
-
-          {/* Loading skeleton */}
-          {loading && (
-            <div className="page-layout">
-              <aside className="sidebar">
-                <div className="skeleton" style={{ height: 300, borderRadius: 10 }} />
-              </aside>
-              <div className="main-content">
-                <div className="loading-grid">
-                  {[1,2,3,4].map(i => <div key={i} className="skeleton" />)}
-                </div>
-                <div className="chart-section">
-                  <div className="skeleton" style={{ height: 320 }} />
-                </div>
-              </div>
+          </div>
+          <div className="group">
+            <span>סמסטר</span>
+            <div className="seg" role="group" aria-label="סמסטר">
+              {[["all", "הכל"], ["1", "א׳"], ["2", "ב׳"]].map(([v, l]) => (
+                <button key={v} className={semester === v ? "active" : ""} onClick={() => setParams({ sem: v === "all" ? null : v })}>
+                  {l}
+                </button>
+              ))}
             </div>
-          )}
-
-          {/* Error */}
-          {error && !loading && (
-            <div className="banner err">
-              <span>⚠</span>
-              <span>{error} —{" "}
-                <button className="btn btn-ghost small" style={{padding:"0 .5rem"}} onClick={handleSubmit}>נסה שוב</button>
-              </span>
-            </div>
-          )}
-
-          {/* Results */}
-          {!loading && data && (
-            <div className="page-layout">
-
-              {/* ── Sidebar ── */}
-              <aside className="sidebar">
-                <div className="sidebar-header">
-                  <span>סינון סמסטרים</span>
-                  <button className="sidebar-toggle-all"
-                    onClick={() => toggleAll(allSidebarIds, allChecked)}
-                    disabled={allSidebarIds.length === 0}>
-                    {allChecked ? "בטל הכל" : "בחר הכל"}
-                  </button>
-                </div>
-
-                {sidebarByYear.map(([year, sems]) => (
-                  <div key={year} className="sidebar-year-group">
-                    <div className="sidebar-year-label">{year}</div>
-                    {sems.map(({ semester: s, id }) => {
-                      const hasData = termHasData(id);
-                      const checked = checkedTerms?.has(id) ?? false;
-                      const term = okTerms.find(t => t.termId === id);
-                      return (
-                        <label key={id} className={`sidebar-item ${!hasData ? "no-data" : ""} ${checked ? "checked" : ""}`}>
-                          <input
-                            type="checkbox"
-                            checked={hasData && checked}
-                            disabled={!hasData}
-                            onChange={() => hasData && toggleTerm(id)}
-                          />
-                          <span className="sidebar-item-label">
-                            סמסטר {SEM_LABELS[s] ?? s}
-                          </span>
-                          {hasData && term ? (
-                            <span className="sidebar-item-n">{term.n} נבחנים</span>
-                          ) : (
-                            <span className="sidebar-item-nodata">אין נתונים</span>
-                          )}
-                        </label>
-                      );
-                    })}
-                  </div>
-                ))}
-              </aside>
-
-              {/* ── Main content ── */}
-              <div className="main-content">
-
-                {/* Course hero */}
-                {anyOk && (
-                  <div className="course-hero">
-                    <h1>
-                      {data.combined.courseName
-                        ? `${data.combined.courseName} (${data.meta.course})`
-                        : `קורס ${data.meta.course}`}
-                    </h1>
-                    <div className="subtitle">
-                      מחלקה {data.meta.dept}
-                      {data.combined.departmentName ? ` – ${data.combined.departmentName}` : ""}
-                      {" • "}תואר {data.meta.degree}
-                      {" • "}עודכן {new Date(data.meta.fetchedAt).toLocaleDateString("he-IL")}
-                    </div>
-                  </div>
-                )}
-
-                {/* Banners */}
-                {failures.length > 0 && (
-                  <div className="banner warn">
-                    <span>⚠</span>
-                    <span>חלק מהסמסטרים לא נטענו ({failures.map(f => f.termId).join(", ")}).{" "}
-                      <button className="btn btn-ghost small" style={{padding:"0 .5rem"}} onClick={handleSubmit}>נסה שוב</button>
-                    </span>
-                  </div>
-                )}
-                {anySupp && (
-                  <div className="banner info">
-                    <span>ℹ</span>
-                    <span>חלק מהסמסטרים מוסתרים בשל מספר נבחנים נמוך מדי (הגנת פרטיות).</span>
-                  </div>
-                )}
-
-                {/* No data */}
-                {!anyOk && (
-                  <div className="empty-state" style={{ paddingTop: "3rem" }}>
-                    <h2>לא נמצאו נתונים</h2>
-                    <p className="muted">לא קיימים ציונים לקורס זה בטווח הסמסטרים שנבחר.</p>
-                  </div>
-                )}
-
-                {anyOk && (
-                  <>
-                    {/* Stats bar — based on visible (filtered) terms */}
-                    <div className="stats-bar">
-                      <div className="stat-card">
-                        <div className="val">{visibleCombined.n}</div>
-                        <div className="lbl">סה״כ נבחנים</div>
-                      </div>
-                      <div className="stat-card">
-                        <div className="val">{fmt1(visibleCombined.stats.mean)}</div>
-                        <div className="lbl">ממוצע</div>
-                      </div>
-                      <div className="stat-card">
-                        <div className="val">{fmt1(visibleCombined.stats.median)}</div>
-                        <div className="lbl">חציון</div>
-                      </div>
-                      <div className="stat-card">
-                        <div className="val">
-                          {visibleCombined.stats.passRate !== null
-                            ? (visibleCombined.stats.passRate * 100).toFixed(1) + "%"
-                            : "–"}
-                        </div>
-                        <div className="lbl">% עוברים</div>
-                      </div>
-                      <div className="stat-card">
-                        <div className="val">{visibleTerms.length}</div>
-                        <div className="lbl">סמסטרים מוצגים</div>
-                      </div>
-                    </div>
-
-                    {/* View toggle */}
-                    <div className="controls">
-                      <div className="control-group">
-                        <label>תצוגה:</label>
-                        <div className="seg" role="group" aria-label="בחר תצוגה">
-                          <button className={viewMode === "combined" ? "active" : ""} onClick={() => handleView("combined")}>משולב</button>
-                          <button className={viewMode === "per-semester" ? "active" : ""} onClick={() => handleView("per-semester")}>לפי סמסטר</button>
-                        </div>
-                      </div>
-                      {visibleTerms.length === 0 && (
-                        <span className="muted small">אין סמסטרים נבחרים — סמן לפחות אחד בסרגל הצד</span>
-                      )}
-                    </div>
-
-                    {/* Chart */}
-                    {visibleTerms.length > 0 && (
-                      <div className="chart-section">
-                        <h2>
-                          {viewMode === "combined"
-                            ? `התפלגות משולבת — ${visibleTerms.map(t => t.label).join(", ")}`
-                            : "השוואה בין סמסטרים"}
-                        </h2>
-                        <GradeChart
-                          terms={visibleTerms}
-                          mode={viewMode}
-                          combined={visibleCombined}
-                        />
-                      </div>
-                    )}
-
-                    {/* Accessible chart table */}
-                    {visibleTerms.length > 0 && (
-                      <details style={{ marginBottom: "1rem" }}>
-                        <summary className="muted small" style={{ cursor: "pointer", padding: ".5rem 0" }}>
-                          הצג טבלת נתוני הגרף (נגישות)
-                        </summary>
-                        <div className="stats-table-wrap" style={{ marginTop: ".5rem" }}>
-                          <table aria-label="נתוני התפלגות ציונים">
-                            <thead>
-                              <tr>
-                                <th>ציון</th>
-                                {viewMode === "combined"
-                                  ? <th>מספר סטודנטים</th>
-                                  : visibleTerms.map(t => <th key={t.termId}>{t.label}</th>)}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {visibleCombined.bins.map((bin, i) => (
-                                (viewMode === "combined" ? bin.count > 0 : true) && (
-                                  <tr key={bin.label}>
-                                    <td className="ltr">{bin.label}</td>
-                                    {viewMode === "combined"
-                                      ? <td>{bin.count}</td>
-                                      : visibleTerms.map(t => <td key={t.termId}>{t.bins[i].count}</td>)}
-                                  </tr>
-                                )
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </details>
-                    )}
-
-                    {/* Stats table */}
-                    <StatsTable terms={visibleTerms} combined={visibleCombined} />
-
-                    {/* Footnotes */}
-                    <div className="footnotes">
-                      מקור נתונים: מערכת הדוחות של אוניברסיטת בן-גוריון בנגב (SCRR016w) •{" "}
-                      ציון מעבר: 56 •{" "}
-                      {visibleTerms.length < okTerms.length && `מוצגים ${visibleTerms.length} מתוך ${okTerms.length} סמסטרים זמינים`}
-                      {visibleCombined.stats.approximate && " • ¹ נתונים סטטיסטיים משוערים"}
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
+          </div>
         </div>
-      </main>
+
+        <nav className="tabs" aria-label="תצוגות">
+          <button className={tab === "dist" ? "active" : ""} onClick={() => setParams({ tab: null })}>התפלגות</button>
+          <button className={tab === "trend" ? "active" : ""} onClick={() => setParams({ tab: "trend" })}>מגמה ומרצים</button>
+          <button className={tab === "compare" ? "active" : ""} onClick={() => setParams({ tab: "compare" })}>
+            השוואה בין קורסים{compare.length > 0 && <span className="count">{compare.length + 1}</span>}
+          </button>
+        </nav>
+
+        {loadingMain ? (
+          <Loader done={main?.done ?? 0} total={termList.length} courseName={anyName} />
+        ) : (
+          <>
+            {main?.error && failures.length === 0 && okTerms.length === 0 && (
+              <div className="notice error">
+                {main.error} · <button className="btn link" onClick={() => setReload((r) => r + 1)}>נסו שוב</button>
+              </div>
+            )}
+            {failures.length > 0 && (
+              <div className="notice warn">
+                לא הצלחנו לטעון {failures.length} סמסטרים ({failures.map((f) => f.label).join(", ")}). שרתי האוניברסיטה איטיים לפעמים ·{" "}
+                <button className="btn link" onClick={() => setReload((r) => r + 1)}>נסו שוב</button>
+              </div>
+            )}
+
+            {okTerms.length === 0 ? (
+              <div className="empty">
+                <h2>אין ציונים לקורס הזה בטווח שנבחר</h2>
+                <p>ייתכן שהקורס לא נלמד בשנים האלה, או שמספר הנבחנים היה קטן מדי לפרסום. נסו להרחיב את הטווח.</p>
+              </div>
+            ) : tab === "dist" ? (
+              <div className="with-rail">
+                <aside className="rail" aria-label="בחירת סמסטרים">
+                  <div className="rail-head">
+                    <span>סמסטרים</span>
+                    <button className="btn link small" onClick={setAll}>{allOn ? "נקה הכל" : "בחר הכל"}</button>
+                  </div>
+                  <div className="rail-years">
+                    {years.map((y) => (
+                      <div key={y}>
+                        <div className="rail-year">
+                          {hebrewYear(y)} · <span className="ltr">{y - 1}–{String(y).slice(2)}</span>
+                        </div>
+                        {termList
+                          .filter((t) => t.year === y)
+                          .map((t) => {
+                            const d = termById.get(t.id);
+                            const has = d?.status === "ok";
+                            return (
+                              <label key={t.id} className={`rail-item ${has ? "" : "disabled"}`}>
+                                <input type="checkbox" checked={has && !exclIds.has(t.id)} disabled={!has} onChange={() => toggleTerm(t.id)} />
+                                <span>סמסטר {SEM_LETTER[t.semester]}</span>
+                                <span className="n">
+                                  {has ? d!.n : d?.status === "suppressed" ? "מוסתר" : d?.status === "error" ? "שגיאה" : "—"}
+                                </span>
+                                {d?.lecturers?.length ? <span className="lect">{d.lecturers.join(", ")}</span> : null}
+                              </label>
+                            );
+                          })}
+                      </div>
+                    ))}
+                  </div>
+                </aside>
+
+                <div>
+                  <StatsLine combined={visibleCombined} termsCount={visible.length} />
+                  {visible.length === 0 ? (
+                    <div className="empty">סמנו לפחות סמסטר אחד ברשימה.</div>
+                  ) : (
+                    <>
+                      <section className="panel">
+                        <div className="panel-head">
+                          <div>
+                            <h2>{view === "combined" ? "התפלגות הציונים" : "התפלגות לפי סמסטר"}</h2>
+                            <div className="sub">
+                              {view === "combined"
+                                ? `${visible.length} סמסטרים יחד · מתחת ל־${FAIL_THRESHOLD} מסומן ככישלון`
+                                : "אחוז הסטודנטים בכל טווח ציונים · הסמסטר האחרון בצבע הכהה"}
+                            </div>
+                          </div>
+                          <div className="seg" role="group" aria-label="סוג תצוגה">
+                            <button className={view === "combined" ? "active" : ""} onClick={() => setParams({ view: null })}>משולב</button>
+                            <button className={view === "per-semester" ? "active" : ""} onClick={() => setParams({ view: "per-semester" })}>לפי סמסטר</button>
+                          </div>
+                        </div>
+                        <GradeChart terms={visible} mode={view} combined={visibleCombined} />
+                      </section>
+                      <StatsTable terms={visible} combined={visibleCombined} fileName={`grades-${formatCourseNumber(course)}`} />
+                    </>
+                  )}
+                </div>
+              </div>
+            ) : tab === "trend" ? (
+              <TrendTab terms={okTerms} />
+            ) : (
+              <CompareTab
+                main={course}
+                compare={compare}
+                series={series}
+                names={names}
+                termList={termList}
+                onAdd={addCompare}
+                onRemove={removeCompare}
+              />
+            )}
+          </>
+        )}
+      </div>
+    </Shell>
+  );
+}
+
+function StatsLine({ combined, termsCount }: { combined: TermDistribution; termsCount: number }) {
+  return (
+    <div className="stats-line">
+      <div><div className="stat-value">{combined.n}</div><div className="stat-label">נבחנים</div></div>
+      <div><div className="stat-value">{fmt1(combined.stats.mean)}</div><div className="stat-label">ממוצע</div></div>
+      <div><div className="stat-value">{fmt1(combined.stats.median)}</div><div className="stat-label">חציון</div></div>
+      <div><div className="stat-value">{pct(combined.stats.passRate)}</div><div className="stat-label">עברו</div></div>
+      <div><div className="stat-value">{termsCount}</div><div className="stat-label">סמסטרים</div></div>
+    </div>
+  );
+}
+
+function TrendTab({ terms }: { terms: TermDistribution[] }) {
+  const chrono = [...terms].sort((a, b) => a.year * 10 + a.semester - (b.year * 10 + b.semester));
+  const byLecturer = summariseByLecturer(terms);
+  if (chrono.length < 2) {
+    return <div className="empty">כדי לראות מגמה צריך לפחות שני סמסטרים עם נתונים — נסו להרחיב את הטווח.</div>;
+  }
+  return (
+    <>
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <h2>ממוצע ואחוז עוברים לאורך הסמסטרים</h2>
+            <div className="sub">קו מקווקו אנכי מסמן החלפת מרצה</div>
+          </div>
+        </div>
+        <TrendChart terms={chrono} />
+      </section>
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <h2>לפי מרצה</h2>
+            <div className="sub">הציונים של כל הסמסטרים שהמרצה לימד, יחד</div>
+          </div>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr><th>מרצה</th><th>סמסטרים</th><th>נבחנים</th><th>ממוצע</th><th>חציון</th><th>עברו</th></tr>
+            </thead>
+            <tbody>
+              {byLecturer.map((g) => (
+                <tr key={g.lecturer}>
+                  <td>{g.lecturer}</td>
+                  <td className="lecturer">{g.terms.map((t) => t.label).join(", ")}</td>
+                  <td>{g.combined.n}</td>
+                  <td>{fmt1(g.combined.stats.mean)}</td>
+                  <td>{fmt1(g.combined.stats.median)}</td>
+                  <td>{pct(g.combined.stats.passRate)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </>
+  );
+}
+
+function CompareTab(props: {
+  main: CourseRef;
+  compare: CourseRef[];
+  series: Record<string, SeriesState>;
+  names: Record<string, { he?: string; en?: string }>;
+  termList: ReturnType<typeof buildTermList>;
+  onAdd: (c: PickedCourse) => void;
+  onRemove: (key: string) => void;
+}) {
+  const { main, compare, series, names, termList, onAdd, onRemove } = props;
+  const all = [main, ...compare];
+  const nameOf = (c: CourseRef) =>
+    names[courseKey(c)]?.he ?? series[courseKey(c)]?.terms.find((t) => t.courseName)?.courseName ?? formatCourseNumber(c);
+
+  const ready: CompareSeries[] = [];
+  const pending: CourseRef[] = [];
+  const noData: CourseRef[] = [];
+  for (const [colorIndex, c] of all.entries()) {
+    const s = series[courseKey(c)];
+    if (!s || s.loading) {
+      pending.push(c);
+      continue;
+    }
+    const ok = s.terms.filter((t) => t.status === "ok");
+    if (ok.length === 0) {
+      noData.push(c);
+      continue;
+    }
+    ready.push({ key: courseKey(c), name: nameOf(c), colorIndex, terms: ok, combined: combinedDistribution(ok) });
+  }
+
+  return (
+    <>
+      <div className="compare-list">
+        {all.map((c, i) => (
+          <span key={courseKey(c)} className="compare-chip">
+            <span className="swatch" style={{ background: `var(--series-${(i % 4) + 1})` }} />
+            {nameOf(c)} <span className="muted ltr small">{formatCourseNumber(c)}</span>
+            {i > 0 && (
+              <button aria-label={`הסר את ${nameOf(c)}`} onClick={() => onRemove(courseKey(c))}>×</button>
+            )}
+          </span>
+        ))}
+        {all.length < MAX_COMPARE && (
+          <div className="compare-add">
+            <CourseSearch onPick={onAdd} placeholder="הוספת קורס להשוואה…" exclude={all.map(formatCourseNumber)} />
+          </div>
+        )}
+      </div>
+
+      {compare.length === 0 && (
+        <div className="notice">הוסיפו קורס אחד או יותר כדי להשוות התפלגות, ממוצעים ואחוזי מעבר.</div>
+      )}
+      {pending.length > 0 && (
+        <div className="notice">
+          <span className="spinner" aria-hidden /> טוען את {pending.map(nameOf).join(", ")}…
+        </div>
+      )}
+
+      {noData.length > 0 && (
+        <div className="notice warn">
+          אין ציונים בטווח שנבחר עבור {noData.map((c) => `${nameOf(c)} (${formatCourseNumber(c)})`).join(", ")} — נסו להרחיב את הטווח.
+        </div>
+      )}
+
+      {ready.length > 0 && (
+        <>
+          <section className="panel">
+            <div className="panel-head">
+              <div>
+                <h2>התפלגות הציונים</h2>
+                <div className="sub">אחוז הסטודנטים בכל טווח ציונים, כל הסמסטרים בטווח יחד</div>
+              </div>
+            </div>
+            <CompareDistribution series={ready} />
+          </section>
+          <section className="panel">
+            <div className="panel-head">
+              <div>
+                <h2>ממוצע לאורך הסמסטרים</h2>
+                <div className="sub">מעבר עם העכבר מציג גם את המרצה</div>
+              </div>
+            </div>
+            <CompareTrend series={ready} termList={termList} />
+          </section>
+          <section className="panel">
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>קורס</th><th>סמסטרים</th><th>נבחנים</th><th>ממוצע</th><th>חציון</th><th>סטיית תקן</th><th>עברו</th></tr>
+                </thead>
+                <tbody>
+                  {ready.map((s) => (
+                    <tr key={s.key}>
+                      <td>
+                        <span className="swatch" style={{ background: `var(--series-${(s.colorIndex % 4) + 1})` }} />
+                        {s.name}
+                      </td>
+                      <td>{s.terms.length}</td>
+                      <td>{s.combined.n}</td>
+                      <td>{fmt1(s.combined.stats.mean)}</td>
+                      <td>{fmt1(s.combined.stats.median)}</td>
+                      <td>{fmt1(s.combined.stats.stdev)}</td>
+                      <td>{pct(s.combined.stats.passRate)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </>
+      )}
+    </>
+  );
+}
+
+function Shell({ children, headerSearch }: { children: React.ReactNode; headerSearch?: React.ReactNode }) {
+  return (
+    <>
+      <header className="site-header">
+        <div className="container inner">
+          <Link className="wordmark" href="/">ציונים <span>· בן-גוריון</span></Link>
+          {headerSearch && <div className="header-search">{headerSearch}</div>}
+          <a className="gh" href={REPO_URL} target="_blank" rel="noreferrer">קוד מקור</a>
+        </div>
+      </header>
+      <main>{children}</main>
+      <footer className="site-footer">
+        <div className="container">
+          <p>הנתונים נשלפים ממערכת הדוחות ומקובץ הקורסים הציבוריים של אוניברסיטת בן-גוריון. האתר אינו אתר רשמי של האוניברסיטה.</p>
+          <p>סמסטרים עם פחות מ־5 נבחנים מוסתרים. ציון מעבר: {FAIL_THRESHOLD}.</p>
+        </div>
+      </footer>
     </>
   );
 }

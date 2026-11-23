@@ -1,57 +1,8 @@
 import { parseStringPromise } from "xml2js";
-import type { Bin, TermDistribution, TermStats } from "@/types";
+import type { TermDistribution, TermStats } from "@/types";
+import { FAIL_THRESHOLD, buildBins, computeStats, termLabel, zeroBins } from "./stats";
+export { FAIL_THRESHOLD, termLabel, zeroBins } from "./stats";
 import { SUPPRESSION_THRESHOLD } from "@/types";
-
-export const FAIL_THRESHOLD = 56; // grades below this are failing
-
-// One bin per grade value 1-100
-export const CANONICAL_BINS: Omit<Bin, "count">[] = Array.from({ length: 100 }, (_, i) => ({
-  label: String(i + 1),
-  min: i + 1,
-  max: i + 1,
-}));
-
-const SEMESTER_LABELS: Record<number, string> = { 1: "א׳", 2: "ב׳", 3: "ג׳" };
-
-export function termLabel(year: number, semester: number): string {
-  return `${SEMESTER_LABELS[semester] ?? semester} ${year}`;
-}
-
-function zeroBins(): Bin[] {
-  return CANONICAL_BINS.map((b) => ({ ...b, count: 0 }));
-}
-
-function computeStats(gradeMap: Map<number, number>, passingThreshold: number): TermStats {
-  const total = [...gradeMap.values()].reduce((s, c) => s + c, 0);
-  if (total === 0)
-    return { mean: null, median: null, stdev: null, passRate: null, approximate: false };
-
-  const expanded: number[] = [];
-  for (const [grade, count] of gradeMap) {
-    for (let i = 0; i < count; i++) expanded.push(grade);
-  }
-  expanded.sort((a, b) => a - b);
-
-  const mean = expanded.reduce((s, g) => s + g, 0) / total;
-  const median =
-    total % 2 === 0
-      ? (expanded[total / 2 - 1] + expanded[total / 2]) / 2
-      : expanded[Math.floor(total / 2)];
-  const variance = expanded.reduce((s, g) => s + (g - mean) ** 2, 0) / total;
-  const stdev = Math.sqrt(variance);
-  const passRate = expanded.filter((g) => g >= passingThreshold).length / total;
-
-  return { mean, median, stdev, passRate, approximate: false };
-}
-
-function buildBins(gradeMap: Map<number, number>): Bin[] {
-  const bins = zeroBins();
-  for (const [grade, count] of gradeMap) {
-    const idx = Math.max(0, Math.min(99, grade - 1));
-    bins[idx].count += count;
-  }
-  return bins;
-}
 
 // Parse CF_2 which looks like:
 // "2026/2 (ציון סופי לכלל הנבחנים)   קורס 361.1.1021 -מבוא להנדסת חשמל"
@@ -178,41 +129,3 @@ export async function parseXmlResponse(
   return { ...base, label: realLabel, courseName, departmentName, n, bins, raw, stats, status: "ok" };
 }
 
-export function combinedDistribution(terms: TermDistribution[]): TermDistribution {
-  const okTerms = terms.filter((t) => t.status === "ok");
-  const bins = zeroBins();
-  let totalN = 0;
-
-  for (const term of okTerms) {
-    totalN += term.n;
-    for (let i = 0; i < bins.length; i++) {
-      bins[i].count += term.bins[i].count;
-    }
-  }
-
-  const pooledMap = new Map<number, number>();
-  for (const term of okTerms) {
-    for (const { grade, count } of term.raw ?? []) {
-      pooledMap.set(grade, (pooledMap.get(grade) ?? 0) + count);
-    }
-  }
-
-  const hasRaw = okTerms.every((t) => t.raw && t.raw.length > 0);
-  const stats = hasRaw && pooledMap.size > 0
-    ? computeStats(pooledMap, FAIL_THRESHOLD)
-    : { mean: null, median: null, stdev: null, passRate: null, approximate: true };
-
-  return {
-    termId: "combined",
-    year: 0,
-    semester: 1,
-    label: "כל הסמסטרים",
-    courseName: okTerms[0]?.courseName,
-    departmentName: okTerms[0]?.departmentName,
-    n: totalN,
-    bins,
-    raw: hasRaw ? [...pooledMap.entries()].map(([grade, count]) => ({ grade, count })) : undefined,
-    stats,
-    status: totalN === 0 ? "empty" : "ok",
-  };
-}
