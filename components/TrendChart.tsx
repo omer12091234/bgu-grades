@@ -46,7 +46,7 @@ export default function TrendChart({ terms }: { terms: TermDistribution[] }) {
   });
 
   const data = {
-    labels: ok.map((t) => [t.label, ...(t.lecturers?.length ? [t.lecturers.join(", ")] : [])]),
+    labels: ok.map((t) => (ok.length > 8 ? t.label : [t.label, ...(t.lecturers?.length ? [t.lecturers.join(", ")] : [])])),
     datasets: [
       {
         label: "ממוצע",
@@ -122,7 +122,7 @@ export default function TrendChart({ terms }: { terms: TermDistribution[] }) {
             x: {
               grid: { display: false },
               border: { color: c.line },
-              ticks: { color: c.muted, font: { ...FONT, size: 11 }, maxRotation: 0, autoSkip: false },
+              ticks: { color: c.muted, font: { ...FONT, size: 11 }, maxRotation: 0, autoSkip: ok.length > 8 },
             },
             y: {
               position: "left",

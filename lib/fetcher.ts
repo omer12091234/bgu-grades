@@ -12,14 +12,22 @@ export function validateInput(value: string): boolean {
   return /^\d{1,6}$/.test(value);
 }
 
-async function fetchTermXml(dept: string, degree: string, course: string, year: number, semester: number) {
+/**
+ * Which students the report covers ("grade" parameter of SCRR016w):
+ * 5 = final grade of everyone, 1 = students who sat מועד א׳, 2 = מועד ב׳,
+ * 3 = the remaining exam session (the report leaves its label blank; by the data it is מועד מיוחד).
+ */
+export const EXAM_GRADE = { final: "5", a: "1", b: "2", special: "3" } as const;
+export type Exam = keyof typeof EXAM_GRADE;
+
+async function fetchTermXml(dept: string, degree: string, course: string, year: number, semester: number, exam: Exam) {
   const params = new URLSearchParams({
     server: "aristo4stu419c",
     report: "SCRR016w",
     p_year: String(year),
     p_semester: String(semester),
     out_institution: "0",
-    grade: "5",
+    grade: EXAM_GRADE[exam],
     list_department: `*${dept}@`,
     list_degree_level: `*${degree}@`,
     list_course: `*${course}@`,
@@ -55,9 +63,10 @@ async function fetchTermUncached(
   degree: string,
   course: string,
   year: number,
-  semester: number
+  semester: number,
+  exam: Exam
 ): Promise<TermDistribution> {
-  const xml = await fetchTermXml(dept, degree, course, year, semester);
+  const xml = await fetchTermXml(dept, degree, course, year, semester, exam);
   return parseXmlResponse(xml, `${year}-${semester}`, year, semester as 1 | 2 | 3);
 }
 
@@ -71,17 +80,18 @@ export async function fetchTerm(
   degree: string,
   course: string,
   year: number,
-  semester: number
+  semester: number,
+  exam: Exam = "final"
 ): Promise<TermDistribution> {
   if (![dept, degree, course].every(validateInput)) {
     throw new Error("Invalid input: dept, degree, and course must be numeric (up to 6 digits)");
   }
   const isCurrent = year >= currentAcademicYear();
-  const cached = unstable_cache(fetchTermUncached, ["bgu-term-v2"], {
+  const cached = unstable_cache(fetchTermUncached, ["bgu-term-v3"], {
     revalidate: isCurrent ? 6 * 60 * 60 : 30 * DAY,
   });
   try {
-    return await cached(dept, degree, course, year, semester);
+    return await cached(dept, degree, course, year, semester, exam);
   } catch (e) {
     return {
       termId: `${year}-${semester}`,

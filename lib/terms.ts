@@ -2,6 +2,12 @@
 import type { CourseRef } from "@/types";
 
 export const SEM_LETTER: Record<number, string> = { 1: "א׳", 2: "ב׳", 3: "קיץ" };
+export const MAX_LOOKBACK = 8;
+
+/** "סמסטר א׳" / "סמסטר ב׳" / "קיץ" */
+export function semesterName(semester: number): string {
+  return semester === 3 ? "קיץ" : `סמסטר ${SEM_LETTER[semester]}`;
+}
 
 export function currentAcademicYear(now = new Date()): number {
   return now.getMonth() >= 9 ? now.getFullYear() + 1 : now.getFullYear();
@@ -13,7 +19,7 @@ export type TermKey = { year: number; semester: number; id: string };
 export function buildTermList(lookback: number, semesterFilter: string): TermKey[] {
   const cur = currentAcademicYear();
   const years = Array.from({ length: lookback }, (_, i) => cur - i);
-  const sems = semesterFilter === "all" ? [2, 1] : [Number(semesterFilter)];
+  const sems = semesterFilter === "all" ? [3, 2, 1] : [Number(semesterFilter)];
   return years.flatMap((y) => sems.map((s) => ({ year: y, semester: s, id: `${y}-${s}` })));
 }
 

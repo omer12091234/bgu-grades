@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchTerm, validateInput } from "@/lib/fetcher";
+import { EXAM_GRADE, fetchTerm, validateInput, type Exam } from "@/lib/fetcher";
 import { getLecturers } from "@/lib/catalog";
 import { currentAcademicYear } from "@/lib/bgu-http";
 import { isRateLimited } from "@/lib/rate-limit";
@@ -16,7 +16,7 @@ function formerDept(dept: string, year: number): string | null {
   return null;
 }
 
-// GET /api/term?dept=361&degree=1&course=2251&year=2025&semester=1
+// GET /api/term?dept=361&degree=1&course=2251&year=2025&semester=1[&exam=final|a|b|special]
 // One semester per request, so the browser can show progress and the CDN caches each term on its own.
 export async function GET(req: NextRequest) {
   if (isRateLimited(req, "term", 120)) {
@@ -29,6 +29,11 @@ export async function GET(req: NextRequest) {
   const course = sp.get("course") ?? "";
   const year = Number(sp.get("year"));
   const semester = Number(sp.get("semester"));
+  const examParam = sp.get("exam") ?? "final";
+  if (!Object.hasOwn(EXAM_GRADE, examParam)) {
+    return NextResponse.json({ error: "exam must be final, a, b or special" }, { status: 400 });
+  }
+  const exam = examParam as Exam;
 
   // P_FOR_STUDENT / p_key are never accepted from clients.
   if (![dept, degree, course].every(validateInput)) {
@@ -40,12 +45,12 @@ export async function GET(req: NextRequest) {
   }
 
   const lecturersP = getLecturers(dept, degree, course, year, semester).catch(() => undefined);
-  let term = await fetchTerm(dept, degree, course, year, semester);
+  let term = await fetchTerm(dept, degree, course, year, semester, exam);
   let usedDept = dept;
   let sourceNumber: string | undefined;
   const alias = formerDept(dept, year);
   if (alias && term.status === "empty") {
-    const aliased = await fetchTerm(alias, degree, course, year, semester);
+    const aliased = await fetchTerm(alias, degree, course, year, semester, exam);
     if (aliased.status === "ok" || aliased.status === "suppressed") {
       term = aliased;
       usedDept = alias;

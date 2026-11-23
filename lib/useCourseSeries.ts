@@ -6,12 +6,15 @@ import { courseKey, termLabel, type TermKey } from "./terms";
 // Per-tab memory cache, so switching tabs or toggling comparison doesn't refetch.
 const memo = new Map<string, Promise<TermResponse>>();
 
-function fetchTerm(c: CourseRef, t: TermKey): Promise<TermResponse> {
-  const key = `${courseKey(c)}:${t.id}`;
+export type Exam = "final" | "a" | "b" | "special";
+
+function fetchTerm(c: CourseRef, t: TermKey, exam: Exam): Promise<TermResponse> {
+  const key = `${courseKey(c)}:${t.id}:${exam}`;
   const hit = memo.get(key);
   if (hit) return hit;
   const p = fetch(
-    `/api/term?dept=${c.dept}&degree=${c.degree}&course=${c.course}&year=${t.year}&semester=${t.semester}`
+    `/api/term?dept=${c.dept}&degree=${c.degree}&course=${c.course}&year=${t.year}&semester=${t.semester}` +
+      (exam === "final" ? "" : `&exam=${exam}`)
   ).then(async (res) => {
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(json.error ?? `שגיאה ${res.status}`);
@@ -30,11 +33,16 @@ export type SeriesState = {
   error: string | null;
 };
 
-/** Loads every term of every course, two requests at a time (BGU's servers are slow and old). */
-export function useCourseSeries(courses: CourseRef[], termList: TermKey[], reloadToken = 0) {
+/** Loads every term of every course, a few requests at a time (BGU's servers are slow and old). */
+export function useCourseSeries(
+  courses: CourseRef[],
+  termList: TermKey[],
+  reloadToken = 0,
+  { exam = "final", concurrency = 3 }: { exam?: Exam; concurrency?: number } = {}
+) {
   const [state, setState] = useState<Record<string, SeriesState>>({});
   const runId = useRef(0);
-  const sig = courses.map(courseKey).join("|") + "#" + termList.map((t) => t.id).join(",") + "#" + reloadToken;
+  const sig = courses.map(courseKey).join("|") + "#" + termList.map((t) => t.id).join(",") + "#" + reloadToken + "#" + exam;
 
   useEffect(() => {
     if (courses.length === 0) return;
@@ -72,7 +80,7 @@ export function useCourseSeries(courses: CourseRef[], termList: TermKey[], reloa
         const { c, t } = jobs[cursor++];
         const k = courseKey(c);
         try {
-          results[k][termList.indexOf(t)] = await fetchTerm(c, t);
+          results[k][termList.indexOf(t)] = await fetchTerm(c, t, exam);
         } catch (e) {
           errors[k] = e instanceof Error ? e.message : String(e);
         }
@@ -80,7 +88,7 @@ export function useCourseSeries(courses: CourseRef[], termList: TermKey[], reloa
         publish();
       }
     };
-    Promise.all([worker(), worker()]);
+    Promise.all(Array.from({ length: concurrency }, worker));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig]);
 

@@ -8,10 +8,11 @@ import CourseSearch, { type PickedCourse } from "@/components/CourseSearch";
 import Loader from "@/components/Loader";
 import StatsTable from "@/components/StatsTable";
 import { combinedDistribution, summariseByLecturer, FAIL_THRESHOLD } from "@/lib/stats";
-import { buildTermList, courseKey, formatCourseNumber, hebrewYear, parseCourseNumber, SEM_LETTER } from "@/lib/terms";
+import { buildTermList, courseKey, formatCourseNumber, hebrewYear, MAX_LOOKBACK, parseCourseNumber, semesterName } from "@/lib/terms";
 import { useCourseSeries, type SeriesState } from "@/lib/useCourseSeries";
 import type { CompareSeries } from "@/components/CompareCharts";
 
+const ExamView = dynamic(() => import("@/components/ExamView"), { ssr: false });
 const GradeChart = dynamic(() => import("@/components/GradeChart"), { ssr: false });
 const TrendChart = dynamic(() => import("@/components/TrendChart"), { ssr: false });
 const CompareDistribution = dynamic(() => import("@/components/CompareCharts").then((m) => m.CompareDistribution), { ssr: false });
@@ -26,7 +27,7 @@ const EXAMPLES: PickedCourse[] = [
 ];
 
 type Tab = "dist" | "trend" | "compare";
-type View = "combined" | "per-semester";
+type View = "combined" | "per-semester" | "exam";
 
 const fmt1 = (n: number | null) => (n === null ? "–" : n.toFixed(1));
 const pct = (n: number | null) => (n === null ? "–" : (n * 100).toFixed(0) + "%");
@@ -54,10 +55,10 @@ function GradeApp() {
         .slice(0, MAX_COMPARE - 1),
     [params]
   );
-  const lookback = Math.min(5, Math.max(1, Number(params.get("y") ?? params.get("lookback") ?? 3) || 3));
-  const semester = ["1", "2"].includes(params.get("sem") ?? params.get("semester") ?? "") ? (params.get("sem") ?? params.get("semester"))! : "all";
+  const lookback = Math.min(MAX_LOOKBACK, Math.max(1, Number(params.get("y") ?? params.get("lookback") ?? 3) || 3));
+  const semester = ["1", "2", "3"].includes(params.get("sem") ?? params.get("semester") ?? "") ? (params.get("sem") ?? params.get("semester"))! : "all";
   const tab = (["dist", "trend", "compare"].includes(params.get("tab") ?? "") ? params.get("tab") : "dist") as Tab;
-  const view = (params.get("view") === "per-semester" ? "per-semester" : "combined") as View;
+  const view = (["per-semester", "exam"].includes(params.get("view") ?? "") ? params.get("view") : "combined") as View;
 
   const [names, setNames] = useState<Record<string, { he?: string; en?: string }>>({});
   const [excluded, setExcluded] = useState<{ key: string; ids: Set<string> }>({ key: "", ids: new Set() });
@@ -200,18 +201,21 @@ function GradeApp() {
         <div className="toolbar">
           <div className="group">
             <span>טווח</span>
-            <div className="seg" role="group" aria-label="מספר שנים אחורה">
-              {[1, 2, 3, 4, 5].map((n) => (
-                <button key={n} className={lookback === n ? "active" : ""} onClick={() => setParams({ y: n === 3 ? null : String(n) })}>
-                  {n === 1 ? "שנה" : `${n} שנים`}
-                </button>
+            <select
+              className="select"
+              aria-label="מספר שנים אחורה"
+              value={lookback}
+              onChange={(e) => setParams({ y: e.target.value === "3" ? null : e.target.value })}
+            >
+              {Array.from({ length: MAX_LOOKBACK }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>{n === 1 ? "שנה אחרונה" : `${n} שנים אחרונות`}</option>
               ))}
-            </div>
+            </select>
           </div>
           <div className="group">
             <span>סמסטר</span>
             <div className="seg" role="group" aria-label="סמסטר">
-              {[["all", "הכל"], ["1", "א׳"], ["2", "ב׳"]].map(([v, l]) => (
+              {[["all", "הכל"], ["1", "א׳"], ["2", "ב׳"], ["3", "קיץ"]].map(([v, l]) => (
                 <button key={v} className={semester === v ? "active" : ""} onClick={() => setParams({ sem: v === "all" ? null : v })}>
                   {l}
                 </button>
@@ -286,13 +290,15 @@ function GradeApp() {
                         </div>
                         {termList
                           .filter((t) => t.year === y)
+                          // Most courses have no summer session; list summer only when it has grades.
+                          .filter((t) => t.semester !== 3 || semester === "3" || (termById.get(t.id)?.status ?? "empty") !== "empty")
                           .map((t) => {
                             const d = termById.get(t.id);
                             const has = d?.status === "ok";
                             return (
                               <label key={t.id} className={`rail-item ${has ? "" : "disabled"}`}>
                                 <input type="checkbox" checked={has && !exclIds.has(t.id)} disabled={!has} onChange={() => toggleTerm(t.id)} />
-                                <span>סמסטר {SEM_LETTER[t.semester]}</span>
+                                <span>{semesterName(t.semester)}</span>
                                 <span className="n">
                                   {has ? d!.n : d?.status === "suppressed" ? "מוסתר" : d?.status === "error" ? "שגיאה" : "—"}
                                 </span>
@@ -319,9 +325,11 @@ function GradeApp() {
                       <section className="panel">
                         <div className="panel-head">
                           <div>
-                            <h2>{view === "combined" ? "התפלגות הציונים" : "התפלגות לפי סמסטר"}</h2>
+                            <h2>{view === "combined" ? "התפלגות הציונים" : view === "exam" ? "התפלגות לפי מועד" : "התפלגות לפי סמסטר"}</h2>
                             <div className="sub">
-                              {view === "combined"
+                              {view === "exam"
+                                ? `אחוז הסטודנטים בכל טווח ציונים, בכל מועד · ${visible.length === 1 ? visible[0].label : `${visible.length} סמסטרים יחד`}`
+                                : view === "combined"
                                 ? `${activeLecturer ? `${activeLecturer} · ` : ""}${visible.length === 1 ? "סמסטר אחד" : `${visible.length} סמסטרים יחד`} · מתחת ל־${FAIL_THRESHOLD} מסומן ככישלון`
                                 : "אחוז הסטודנטים בכל טווח ציונים · הסמסטר האחרון בצבע הכהה"}
                             </div>
@@ -329,9 +337,14 @@ function GradeApp() {
                           <div className="seg" role="group" aria-label="סוג תצוגה">
                             <button className={view === "combined" ? "active" : ""} onClick={() => setParams({ view: null })}>משולב</button>
                             <button className={view === "per-semester" ? "active" : ""} onClick={() => setParams({ view: "per-semester" })}>לפי סמסטר</button>
+                            <button className={view === "exam" ? "active" : ""} onClick={() => setParams({ view: "exam" })}>לפי מועד</button>
                           </div>
                         </div>
-                        <GradeChart terms={visible} mode={view} combined={visibleCombined} />
+                        {view === "exam" ? (
+                          <ExamView course={course} terms={visible} overall={visibleCombined} />
+                        ) : (
+                          <GradeChart terms={visible} mode={view} combined={visibleCombined} />
+                        )}
                       </section>
                       <StatsTable terms={visible} combined={visibleCombined} fileName={`grades-${formatCourseNumber(course)}`} />
                     </>
