@@ -6,7 +6,7 @@ import {
 import { Line } from "react-chartjs-2";
 import type { TermDistribution } from "@/types";
 import { BUCKETS, bucketShares } from "@/lib/stats";
-import { useIsNarrow, useThemeColors } from "@/lib/useThemeColors";
+import { alpha, useIsNarrow, useThemeColors } from "@/lib/useThemeColors";
 import type { TermKey } from "@/lib/terms";
 import { termLabel } from "@/lib/terms";
 
@@ -21,6 +21,9 @@ export type CompareSeries = {
   colorIndex: number;
   terms: TermDistribution[];
   combined: TermDistribution;
+  /** Optional line style, used when several lines share a colour (e.g. one exam session over several semesters). */
+  opacity?: number;
+  dash?: number[];
 };
 
 function baseOptions(c: ReturnType<typeof useThemeColors>) {
@@ -49,19 +52,29 @@ function baseOptions(c: ReturnType<typeof useThemeColors>) {
   };
 }
 
-export function CompareDistribution({ series }: { series: CompareSeries[] }) {
+export function CompareDistribution({
+  series,
+  tall,
+  hideLegend,
+}: {
+  series: CompareSeries[];
+  tall?: boolean;
+  /** For callers that draw their own legend. */
+  hideLegend?: boolean;
+}) {
   const c = useThemeColors();
   const o = baseOptions(c);
   return (
-    <div className="chart-box" role="img" aria-label="השוואת התפלגות ציונים בין קורסים">
+    <div className={`chart-box ${tall ? "tall" : ""}`} role="img" aria-label="השוואת התפלגות ציונים">
       <Line
         data={{
           labels: BUCKETS.map((b) => b.label),
           datasets: series.map((s) => ({
             label: s.name,
             data: bucketShares(s.combined).map((v) => +(v * 100).toFixed(1)),
-            borderColor: c.series[s.colorIndex % 4],
-            backgroundColor: c.series[s.colorIndex % 4],
+            borderColor: alpha(c.series[s.colorIndex % 4], s.opacity ?? 1),
+            backgroundColor: alpha(c.series[s.colorIndex % 4], s.opacity ?? 1),
+            borderDash: s.dash ?? [],
             borderWidth: 2,
             pointRadius: 2.5,
             tension: 0.25,
@@ -71,6 +84,7 @@ export function CompareDistribution({ series }: { series: CompareSeries[] }) {
           ...o,
           plugins: {
             ...o.plugins,
+            legend: { ...o.plugins.legend, display: !hideLegend },
             tooltip: {
               ...o.plugins.tooltip,
               callbacks: {

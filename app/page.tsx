@@ -3,6 +3,7 @@ import { Suspense, useCallback, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import Shell from "@/components/Shell";
 import type { CourseRef, TermDistribution } from "@/types";
 import CourseSearch, { type PickedCourse } from "@/components/CourseSearch";
 import Loader from "@/components/Loader";
@@ -138,6 +139,9 @@ function GradeApp() {
                 <p>עד ארבעה קורסים על אותו גרף — למשל קורס בחירה מול חלופה שלו.</p>
               </div>
             </div>
+            <p className="guide-link">
+              <Link href="/guide">הסבר מלא על מה אפשר לראות באתר ←</Link>
+            </p>
           </section>
         </div>
       </Shell>
@@ -555,26 +559,6 @@ function CompareTab(props: {
           </section>
         </>
       )}
-    </>
-  );
-}
-
-function Shell({ children, headerSearch }: { children: React.ReactNode; headerSearch?: React.ReactNode }) {
-  return (
-    <>
-      <header className="site-header">
-        <div className="container inner">
-          <Link className="wordmark" href="/">ציונים <span>· בן-גוריון</span></Link>
-          {headerSearch && <div className="header-search">{headerSearch}</div>}
-        </div>
-      </header>
-      <main>{children}</main>
-      <footer className="site-footer">
-        <div className="container">
-          <p>הנתונים נשלפים ממערכת הדוחות ומקובץ הקורסים הציבוריים של אוניברסיטת בן-גוריון. האתר אינו אתר רשמי של האוניברסיטה.</p>
-          <p>סמסטרים עם פחות מ־5 נבחנים מוסתרים. ציון מעבר: {FAIL_THRESHOLD}.</p>
-        </div>
-      </footer>
     </>
   );
 }
