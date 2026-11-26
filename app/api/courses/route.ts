@@ -22,6 +22,6 @@ export async function GET(req: NextRequest) {
       { headers: { "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=604800" } }
     );
   } catch {
-    return NextResponse.json({ error: "קובץ הקורסים של האוניברסיטה לא זמין כרגע" }, { status: 502 });
+    return NextResponse.json({ error: "החיפוש לא זמין כרגע, נסו שוב בעוד רגע" }, { status: 502 });
   }
 }

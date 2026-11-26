@@ -136,7 +136,7 @@ export default function CourseSearch({ onPick, placeholder, large, autoFocus, ex
             )
           ) : loading ? (
             <div className="search-status">
-              <span className="spinner" aria-hidden /> מחפש בקובץ הקורסים…
+              <span className="spinner" aria-hidden /> מחפש…
             </div>
           ) : error ? (
             <div className="search-status">{error}</div>

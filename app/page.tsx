@@ -6,6 +6,7 @@ import Link from "next/link";
 import Shell from "@/components/Shell";
 import type { CourseRef, TermDistribution } from "@/types";
 import CourseSearch, { type PickedCourse } from "@/components/CourseSearch";
+import type { TourStep } from "@/components/Tour";
 import Loader from "@/components/Loader";
 import StatsTable from "@/components/StatsTable";
 import { combinedDistribution, summariseByLecturer, FAIL_THRESHOLD } from "@/lib/stats";
@@ -14,6 +15,7 @@ import { useCourseSeries, type SeriesState } from "@/lib/useCourseSeries";
 import type { CompareSeries } from "@/components/CompareCharts";
 
 const ExamView = dynamic(() => import("@/components/ExamView"), { ssr: false });
+const Tour = dynamic(() => import("@/components/Tour"), { ssr: false });
 const GradeChart = dynamic(() => import("@/components/GradeChart"), { ssr: false });
 const TrendChart = dynamic(() => import("@/components/TrendChart"), { ssr: false });
 const CompareDistribution = dynamic(() => import("@/components/CompareCharts").then((m) => m.CompareDistribution), { ssr: false });
@@ -28,6 +30,35 @@ const EXAMPLES: PickedCourse[] = [
 ];
 
 type Tab = "dist" | "trend" | "compare";
+
+const TOUR_STEPS: TourStep[] = [
+  { target: '[data-tour="search"]', title: "חיפוש קורס", body: "מקלידים חלק משם הקורס ובוחרים מהרשימה, או מקלידים מספר קורס כמו 361.1.1021." },
+  { target: '[data-tour="filters"]', title: "טווח וסמסטר", body: "כמה שנים אחורה להציג (עד 8), ואיזה סמסטר: א׳, ב׳, קיץ או כולם." },
+  { target: '[data-tour="tabs"]', title: "שלוש תצוגות", body: "התפלגות הציונים, מגמה לאורך השנים לפי מרצה, והשוואה בין קורסים." },
+  { target: '[data-tour="lecturers"]', title: "סינון לפי מרצה", body: "לחיצה על מרצה משאירה רק את הסמסטרים שהוא לימד. ״כולם״ מחזיר הכל." },
+  { target: '[data-tour="semesters"], [data-tour="semesters-toggle"]', title: "בחירת סמסטרים", body: "כאן בוחרים אילו סמסטרים ייכללו בחישוב. ליד כל סמסטר מופיעים מספר הנבחנים והמרצה. בטלפון לוחצים על השורה כדי לפתוח את הרשימה." },
+  { target: '[data-tour="stats"]', title: "המספרים המרכזיים", body: "נבחנים, ממוצע, חציון ואחוז העוברים (56 ומעלה) בסמסטרים שנבחרו." },
+  { target: '[data-tour="views"]', title: "סוג הגרף", body: "משולב: כל הציונים יחד. לפי סמסטר: קו לכל סמסטר. לפי מועד: מועד א׳, ב׳ ומיוחד, יחד או בכל סמסטר בנפרד." },
+  { target: '[data-tour="chart"]', title: "הגרף", body: "מעבר עם העכבר או נגיעה בגרף מציגים את המספרים המדויקים. עמודות כתומות הן ציון נכשל. בטלפון אפשר לסובב לרוחב לגרף גדול יותר." },
+  { target: '[data-tour="table"]', title: "טבלה לפי סמסטר", body: "כל סמסטר בשורה, עם המרצה והנתונים. אפשר להוריד אותה כקובץ CSV." },
+  { target: '[data-tour="tab-trend"]', title: "מגמה ומרצים", body: "איך הממוצע ואחוז העוברים השתנו לאורך השנים, עם סימון כשהמרצה התחלף, וטבלה לפי מרצה." },
+  { target: '[data-tour="tab-compare"]', title: "השוואה בין קורסים", body: "מוסיפים עד שלושה קורסים נוספים ורואים את ההתפלגות והממוצעים שלהם על אותו גרף." },
+  { target: '[data-tour="guide"]', title: "רוצים לדעת עוד?", body: "בעמוד ״איך זה עובד״ יש הסבר מלא על כל תצוגה ועל המושגים. אפשר להפעיל את הסיור שוב מהכפתור ״סיור מודרך״." },
+];
+const TOUR_SEEN_KEY = "tour-seen-v1";
+
+function readTourSeen(): boolean {
+  try {
+    return localStorage.getItem(TOUR_SEEN_KEY) === "1";
+  } catch {
+    return true; // storage blocked: don't nag
+  }
+}
+function markTourSeen() {
+  try {
+    localStorage.setItem(TOUR_SEEN_KEY, "1");
+  } catch {}
+}
 type View = "combined" | "per-semester" | "exam";
 
 const fmt1 = (n: number | null) => (n === null ? "–" : n.toFixed(1));
@@ -66,6 +97,9 @@ function GradeApp() {
   const [reload, setReload] = useState(0);
   // On phones the semester list starts collapsed so the chart is visible first.
   const [railOpen, setRailOpen] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+  // GradeApp only renders in the browser (useSearchParams), so localStorage is readable here.
+  const [tourSeen, setTourSeen] = useState(readTourSeen);
 
   const setParams = useCallback(
     (patch: Record<string, string | null>) => {
@@ -85,10 +119,11 @@ function GradeApp() {
     if (c.nameHe) setNames((n) => ({ ...n, [courseKey(c)]: { he: c.nameHe, en: c.nameEn } }));
   };
 
-  const openCourse = (c: PickedCourse) => {
+  const openCourse = (c: PickedCourse, withTour = false) => {
     rememberName(c);
     const p = new URLSearchParams();
     p.set("c", formatCourseNumber(c));
+    if (withTour) p.set("tour", "1");
     if (lookback !== 3) p.set("y", String(lookback));
     if (semester !== "all") p.set("sem", semester);
     router.push("?" + p.toString(), { scroll: false });
@@ -140,7 +175,9 @@ function GradeApp() {
               </div>
             </div>
             <p className="guide-link">
-              <Link href="/guide">הסבר מלא על מה אפשר לראות באתר ←</Link>
+              <button className="btn link" onClick={() => openCourse(EXAMPLES[0], true)}>סיור מודרך על קורס לדוגמה</button>
+              {" · "}
+              <Link href="/guide">הסבר מלא על מה אפשר לראות באתר</Link>
             </p>
           </section>
         </div>
@@ -189,8 +226,33 @@ function GradeApp() {
   const years = [...new Set(termList.map((t) => t.year))];
   const lecturersNow = okTerms[0]?.lecturers;
 
+  // The tour walks the distribution tab, so it starts there; ?tour=1 (from the home page) starts it once data is in.
+  const startTour = () => {
+    if (tab !== "dist" || view !== "combined") setParams({ tab: null, view: null });
+    setTourOpen(true);
+  };
+  const closeTour = () => {
+    setTourOpen(false);
+    setTourSeen(true);
+    markTourSeen();
+    if (params.get("tour")) setParams({ tour: null });
+  };
+  const canTour = !loadingMain && okTerms.length > 0 && tab === "dist";
+  const showTour = canTour && (tourOpen || params.get("tour") === "1");
+  const showInvite = canTour && !showTour && !tourSeen;
+
   return (
     <Shell headerSearch={<CourseSearch onPick={openCourse} placeholder="חיפוש קורס אחר…" />}>
+      {showTour && <Tour steps={TOUR_STEPS} onClose={closeTour} />}
+      {showInvite && (
+        <div className="tour-invite" role="status">
+          <p>פעם ראשונה כאן? סיור קצר יראה לכם מה אפשר לעשות בעמוד.</p>
+          <div className="row">
+            <button className="btn primary" onClick={startTour}>התחלת סיור</button>
+            <button className="btn link" onClick={() => { setTourSeen(true); markTourSeen(); }}>לא תודה</button>
+          </div>
+        </div>
+      )}
       <div className="container">
         <div className="course-head">
           <div>
@@ -202,9 +264,10 @@ function GradeApp() {
               {lecturersNow?.length ? <span>מרצה אחרון: {lecturersNow.join(", ")}</span> : null}
             </div>
           </div>
+          <button className="btn" onClick={startTour} disabled={loadingMain}>סיור מודרך</button>
         </div>
 
-        <div className="toolbar">
+        <div className="toolbar" data-tour="filters">
           <div className="group">
             <span>טווח</span>
             <select
@@ -230,10 +293,10 @@ function GradeApp() {
           </div>
         </div>
 
-        <nav className="tabs" aria-label="תצוגות">
+        <nav className="tabs" aria-label="תצוגות" data-tour="tabs">
           <button className={tab === "dist" ? "active" : ""} onClick={() => setParams({ tab: null })}>התפלגות</button>
-          <button className={tab === "trend" ? "active" : ""} onClick={() => setParams({ tab: "trend" })}>מגמה ומרצים</button>
-          <button className={tab === "compare" ? "active" : ""} onClick={() => setParams({ tab: "compare" })}>
+          <button data-tour="tab-trend" className={tab === "trend" ? "active" : ""} onClick={() => setParams({ tab: "trend" })}>מגמה ומרצים</button>
+          <button data-tour="tab-compare" className={tab === "compare" ? "active" : ""} onClick={() => setParams({ tab: "compare" })}>
             השוואה בין קורסים{compare.length > 0 && <span className="count">{compare.length + 1}</span>}
           </button>
         </nav>
@@ -249,7 +312,7 @@ function GradeApp() {
             )}
             {failures.length > 0 && (
               <div className="notice warn">
-                לא הצלחנו לטעון {failures.length} סמסטרים ({failures.map((f) => f.label).join(", ")}). שרתי האוניברסיטה איטיים לפעמים ·{" "}
+                לא הצלחנו לטעון {failures.length} סמסטרים ({failures.map((f) => f.label).join(", ")}). ·{" "}
                 <button className="btn link" onClick={() => setReload((r) => r + 1)}>נסו שוב</button>
               </div>
             )}
@@ -270,7 +333,7 @@ function GradeApp() {
               <div className="with-rail">
                 <aside className="rail" aria-label="בחירת סמסטרים">
                   {lecturerOptions.length > 1 && (
-                    <div className="rail-filter">
+                    <div className="rail-filter" data-tour="lecturers">
                       <div className="rail-head"><span>מרצה</span></div>
                       <div className="lecturer-chips" role="group" aria-label="סינון לפי מרצה">
                         <button className={activeLecturer === null && allOn ? "active" : ""} onClick={() => pickLecturer(null)}>
@@ -284,14 +347,14 @@ function GradeApp() {
                       </div>
                     </div>
                   )}
-                  <button className="rail-toggle" aria-expanded={railOpen} onClick={() => setRailOpen((o) => !o)}>
+                  <button className="rail-toggle" data-tour="semesters-toggle" aria-expanded={railOpen} onClick={() => setRailOpen((o) => !o)}>
                     <span>סמסטרים</span>
                     <span className="muted">
                       {visible.length} מתוך {okTerms.length} נבחרו
                     </span>
                     <span className="chev" aria-hidden>▾</span>
                   </button>
-                  <div className={`rail-terms ${railOpen ? "open" : ""}`}>
+                  <div className={`rail-terms ${railOpen ? "open" : ""}`} data-tour="semesters">
                   <div className="rail-head">
                     <span>סמסטרים</span>
                     <button className="btn link small" onClick={setAll}>{allOn ? "נקה הכל" : "בחר הכל"}</button>
@@ -337,7 +400,7 @@ function GradeApp() {
                     <div className="empty">סמנו לפחות סמסטר אחד ברשימה.</div>
                   ) : (
                     <>
-                      <section className="panel">
+                      <section className="panel" data-tour="chart">
                         <div className="panel-head">
                           <div>
                             <h2>{view === "combined" ? "התפלגות הציונים" : view === "exam" ? "התפלגות לפי מועד" : "התפלגות לפי סמסטר"}</h2>
@@ -349,7 +412,7 @@ function GradeApp() {
                                 : "אחוז הסטודנטים בכל טווח ציונים · הסמסטר האחרון בצבע הכהה"}
                             </div>
                           </div>
-                          <div className="seg" role="group" aria-label="סוג תצוגה">
+                          <div className="seg" role="group" aria-label="סוג תצוגה" data-tour="views">
                             <button className={view === "combined" ? "active" : ""} onClick={() => setParams({ view: null })}>משולב</button>
                             <button className={view === "per-semester" ? "active" : ""} onClick={() => setParams({ view: "per-semester" })}>לפי סמסטר</button>
                             <button className={view === "exam" ? "active" : ""} onClick={() => setParams({ view: "exam" })}>לפי מועד</button>
@@ -388,7 +451,7 @@ function GradeApp() {
 
 function StatsLine({ combined, termsCount }: { combined: TermDistribution; termsCount: number }) {
   return (
-    <div className="stats-line">
+    <div className="stats-line" data-tour="stats">
       <div><div className="stat-value">{combined.n}</div><div className="stat-label">נבחנים</div></div>
       <div><div className="stat-value">{fmt1(combined.stats.mean)}</div><div className="stat-label">ממוצע</div></div>
       <div><div className="stat-value">{fmt1(combined.stats.median)}</div><div className="stat-label">חציון</div></div>

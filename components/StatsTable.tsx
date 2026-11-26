@@ -42,7 +42,7 @@ export default function StatsTable({ terms, combined, fileName = "grade-stats" }
   };
 
   return (
-    <section className="panel">
+    <section className="panel" data-tour="table">
       <div className="panel-head">
         <h2>לפי סמסטר</h2>
         <button className="btn" onClick={exportCsv}>הורדת CSV</button>
